@@ -1,39 +1,53 @@
 # NetworkDoctor
 
-NetworkDoctor 是面向 Windows 10 和 Windows 11 的简体中文网络诊断工具。它只读取本机网络状态，不需要管理员权限，也不会修改 DNS、IP 地址、网卡、路由或其他系统设置。
+NetworkDoctor is a lightweight, Simplified Chinese network diagnostic tool for Windows 10 and Windows 11. It reads local network information without requiring administrator privileges and never changes DNS, IP address, network adapter, routing, or other system settings.
 
-## 使用可执行文件
+## Using the Executable
 
-双击 `NetworkDoctor.exe`，再点击“开始诊断”。完成后可以查看报告或点击“复制结果”；再次点击“重新诊断”即可刷新结果。
+Double-click `NetworkDoctor.exe`, then click **Start Diagnosis** (`开始诊断`). When the diagnosis finishes, review the report or click **Copy Results** (`复制结果`). Click **Run Again** (`重新诊断`) to refresh the report.
 
-每项检查有四种状态：`正常` 表示证据未显示问题，`提示` 表示有值得关注的现象，`异常` 表示发现明确故障，`无法检测` 表示超时、权限或数据不足使该项无法可靠判断。
+Each check uses one of four states:
 
-网络质量标签会随测量项显示。延迟为 `优秀`、`良好`、`略高`、`较高` 或 `非常高`；抖动为 `稳定`、`轻微波动`、`存在波动`、`波动明显` 或 `非常不稳定`；丢包为 `正常`、`偶发丢包`、`连接不稳定` 或 `严重丢包`；Wi-Fi 信号为 `较弱`、`一般` 或 `良好`。
+- **Normal** (`正常`): the available evidence does not indicate a problem.
+- **Notice** (`提示`): something may require attention.
+- **Error** (`异常`): a clear fault was detected.
+- **Unavailable** (`无法检测`): the check could not produce reliable evidence because of a timeout, insufficient permissions, or missing data.
 
-## 源码开发与测试
+Measured network quality is described with these labels:
 
-在项目根目录创建名为 `.venv` 的 Python 虚拟环境，并在其中安装 `requirements-dev.txt` 中的开发依赖。运行全部测试：
+- Latency: Excellent, Good, Slightly High, High, or Very High.
+- Jitter: Stable, Minor Variation, Noticeable Variation, Significant Variation, or Very Unstable.
+- Packet loss: Normal, Occasional Loss, Unstable Connection, or Severe Loss.
+- Wi-Fi signal: Weak, Fair, or Good.
+
+## Development and Testing
+
+Create a Python virtual environment named `.venv` in the project root, then install the development dependencies listed in `requirements-dev.txt`.
+
+Run the complete test suite:
 
 ```powershell
 & .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-从源码启动：
+Run the application from source:
 
 ```powershell
 & .\.venv\Scripts\python.exe .\network_doctor_main.py
 ```
 
-## 构建
+## Building
 
-构建脚本会先运行全部测试，再生成单文件、无控制台窗口的 `dist\NetworkDoctor.exe`：
+The build script runs the complete test suite and then creates a single-file, windowed executable at `dist\NetworkDoctor.exe`:
 
 ```powershell
 & .\build.ps1
 ```
 
-## 诊断限制
+## Diagnostic Limitations
 
-部分网络会屏蔽 ICMP（ping），所以没有 ping 响应不一定代表断网；工具会在结果不明确时使用短时 TCP 检查降低误判。DNS 检查只能说明测试域名当时是否能解析，无法覆盖缓存、分流 DNS、特定域名或上游服务的全部问题。命令失败、超时或证据不足会显示为“无法检测”，而不是猜测故障。
+Some networks block ICMP (ping), so a missing ping response does not always mean that the Internet connection is down. When the result is inconclusive, NetworkDoctor uses short TCP connection checks to reduce false diagnoses.
 
-NetworkDoctor 只提供诊断结论和非侵入式建议，不会自动修复网络，也不包含后台监控、遥测、历史记录、安装器或更新器。
+DNS checks only confirm whether the selected test domains could be resolved at that moment. They cannot fully evaluate cached responses, split DNS configurations, domain-specific failures, or every upstream DNS service. A failed command, timeout, or lack of evidence is reported as **Unavailable** instead of being treated as a confirmed fault.
+
+NetworkDoctor provides diagnostic conclusions and non-invasive recommendations only. It does not repair the network automatically and does not include background monitoring, telemetry, history, an installer, or an updater.
