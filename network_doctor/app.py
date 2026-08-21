@@ -24,7 +24,7 @@ class NetworkDoctorApp:
         self._report_text = ""
         self._worker: threading.Thread | None = None
 
-        root.title("网络医生")
+        root.title("NetworkDoctor")
         root.geometry("760x560")
         root.minsize(760, 560)
 
@@ -57,7 +57,7 @@ class NetworkDoctorApp:
         self.start_button = ttk.Button(buttons, text="开始诊断", command=self.start_diagnosis)
         self.start_button.grid(row=0, column=0, padx=(0, 8))
         self.copy_button = ttk.Button(
-            buttons, text="复制报告", command=self.copy_result, state="disabled"
+            buttons, text="复制结果", command=self.copy_result, state="disabled"
         )
         self.copy_button.grid(row=0, column=1)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -124,7 +124,7 @@ class NetworkDoctorApp:
                 self.status_var.set("诊断完成")
                 self.progress["value"] = 100
                 self.progress.stop()
-                self.start_button.configure(state="normal")
+                self.start_button.configure(state="normal", text="重新诊断")
                 self.copy_button.configure(state="normal")
                 completed = True
             elif kind == "error":

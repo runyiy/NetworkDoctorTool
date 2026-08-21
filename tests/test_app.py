@@ -51,11 +51,73 @@ class FakeText:
 
 
 class FakeButton:
-    def __init__(self, state="normal"):
+    def __init__(self, state="normal", text="开始诊断"):
         self.state = state
+        self.text = text
 
     def configure(self, **options):
         self.state = options.get("state", self.state)
+        self.text = options.get("text", self.text)
+
+
+class FakeLayoutWidget:
+    def __init__(self, parent=None, **options):
+        self.parent = parent
+        self.options = options
+
+    def grid(self, **options):
+        self.grid_options = options
+
+    def configure(self, **options):
+        self.options.update(options)
+
+    def columnconfigure(self, *args, **kwargs):
+        pass
+
+    def rowconfigure(self, *args, **kwargs):
+        pass
+
+    def yview(self, *args, **kwargs):
+        pass
+
+    def set(self, *args, **kwargs):
+        pass
+
+    def __setitem__(self, key, value):
+        self.options[key] = value
+
+
+class FakeLayoutRoot:
+    def __init__(self):
+        self.window_title = None
+
+    def title(self, value):
+        self.window_title = value
+
+    def geometry(self, value):
+        pass
+
+    def minsize(self, width, height):
+        pass
+
+    def columnconfigure(self, *args, **kwargs):
+        pass
+
+    def rowconfigure(self, *args, **kwargs):
+        pass
+
+    def protocol(self, *args, **kwargs):
+        pass
+
+
+def constructed_app(monkeypatch):
+    app_module = importlib.import_module("network_doctor.app")
+    monkeypatch.setattr(app_module.tk, "StringVar", FakeValue)
+    monkeypatch.setattr(app_module.tk, "Text", FakeLayoutWidget)
+    for widget_name in ("Frame", "Label", "Progressbar", "Scrollbar", "Button"):
+        monkeypatch.setattr(app_module.ttk, widget_name, FakeLayoutWidget)
+    root = FakeLayoutRoot()
+    return root, app_module.NetworkDoctorApp(root)
 
 
 class FakeRoot:
@@ -125,11 +187,26 @@ def test_drain_queue_renders_result_and_reenables_actions():
     assert "总体结论" in app.output.content
     assert "未发现明显网络问题" in app.output.content
     assert app.start_button.state == "normal"
+    assert app.start_button.text == "重新诊断"
     assert app.copy_button.state == "normal"
     assert app.progress.stopped is True
     assert app.progress.value == 100
     assert app._polling is False
     assert app.root.scheduled == []
+
+
+def test_constructed_window_uses_product_name_as_its_title(monkeypatch):
+    """Catches the application window presenting a different product title."""
+    root, _ = constructed_app(monkeypatch)
+
+    assert root.window_title == "NetworkDoctor"
+
+
+def test_constructed_window_labels_the_copy_action_as_copy_result(monkeypatch):
+    """Catches the visible copy action diverging from the specified UI label."""
+    _, app = constructed_app(monkeypatch)
+
+    assert app.copy_button.options["text"] == "复制结果"
 
 
 def test_drain_queue_shows_safe_error_message():
