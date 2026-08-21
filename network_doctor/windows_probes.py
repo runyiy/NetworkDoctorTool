@@ -12,6 +12,10 @@ from typing import Any
 from network_doctor.models import AdapterInfo, PingStats
 
 
+class ProbeUnavailable(RuntimeError):
+    """Raised when a probe cannot be run in the current environment."""
+
+
 PING_TIME_RE = re.compile(r"[=<]\s*(\d+(?:\.\d+)?)\s*ms", re.IGNORECASE)
 PERCENT_RE = re.compile(r":\s*(\d{1,3})\s*%")
 
