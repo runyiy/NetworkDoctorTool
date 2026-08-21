@@ -195,3 +195,64 @@ def test_format_report_contains_required_sections_and_plain_text_markers():
     assert "[正常]" in text
     assert "1. " in text
     assert "\x1b[" not in text
+
+
+def test_wifi_signal_at_fifty_percent_is_reported_as_general():
+    adapter = replace(healthy_snapshot().active_adapter, wifi_signal_percent=50)
+
+    report = analyze(replace(healthy_snapshot(), active_adapter=adapter))
+
+    assert any(
+        finding.title == "Wi-Fi 信号" and "一般" in finding.detail
+        for finding in report.findings
+    )
+
+
+def test_wifi_signal_at_seventy_percent_is_reported_as_good():
+    adapter = replace(healthy_snapshot().active_adapter, wifi_signal_percent=70)
+
+    report = analyze(replace(healthy_snapshot(), active_adapter=adapter))
+
+    assert any(
+        finding.title == "Wi-Fi 信号" and "良好" in finding.detail
+        for finding in report.findings
+    )
+
+
+def test_missing_second_public_ping_is_unavailable_even_when_tcp_fails():
+    snapshot = replace(
+        healthy_snapshot(),
+        internet_pings=(PingStats("1.1.1.1", 6, ()),),
+        tcp_reachable=False,
+    )
+
+    report = analyze(snapshot)
+
+    assert report.overall is CheckState.UNAVAILABLE
+    assert report.primary_problem == "无法完成明确判断"
+
+
+def test_weak_wifi_is_preserved_when_ipv4_is_missing():
+    adapter = replace(
+        healthy_snapshot().active_adapter,
+        ipv4_addresses=(),
+        wifi_signal_percent=42,
+    )
+
+    report = analyze(replace(healthy_snapshot(), active_adapter=adapter))
+
+    assert report.primary_problem == "未获取到 IPv4 地址"
+    assert any(finding.title == "Wi-Fi 信号较弱" for finding in report.findings)
+
+
+def test_weak_wifi_is_preserved_when_apipa_is_detected():
+    adapter = replace(
+        healthy_snapshot().active_adapter,
+        ipv4_addresses=("169.254.10.20",),
+        wifi_signal_percent=42,
+    )
+
+    report = analyze(replace(healthy_snapshot(), active_adapter=adapter))
+
+    assert report.primary_problem == "DHCP 获取地址失败"
+    assert any(finding.title == "Wi-Fi 信号较弱" for finding in report.findings)

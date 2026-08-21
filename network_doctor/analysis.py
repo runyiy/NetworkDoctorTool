@@ -136,8 +136,10 @@ def _append_wifi_finding(adapter: AdapterInfo, findings: list[Finding]) -> None:
         findings.append(Finding(CheckState.UNAVAILABLE, "Wi-Fi 信号", "未能读取 Wi-Fi 信号强度。"))
     elif signal < 50:
         findings.append(Finding(CheckState.WARNING, "Wi-Fi 信号较弱", f"当前信号强度为 {signal}%。"))
+    elif signal < 70:
+        findings.append(Finding(CheckState.OK, "Wi-Fi 信号", f"当前信号强度为 {signal}%，一般。"))
     else:
-        findings.append(Finding(CheckState.OK, "Wi-Fi 信号", f"当前信号强度为 {signal}%。"))
+        findings.append(Finding(CheckState.OK, "Wi-Fi 信号", f"当前信号强度为 {signal}%，良好。"))
 
 
 def _append_gateway_findings(snapshot: ProbeSnapshot, findings: list[Finding]) -> str:
@@ -207,6 +209,7 @@ def analyze(snapshot: ProbeSnapshot) -> DiagnosisReport:
         return _report(CheckState.ERROR, "未连接到可用网络适配器", findings)
 
     findings.append(Finding(CheckState.OK, "网络适配器", f"正在使用 {adapter.name}。"))
+    _append_wifi_finding(adapter, findings)
     addresses = _ipv4_addresses(adapter)
     if not addresses:
         findings.append(Finding(CheckState.ERROR, "IPv4 地址", "未获取到可用的 IPv4 地址。"))
@@ -219,10 +222,8 @@ def analyze(snapshot: ProbeSnapshot) -> DiagnosisReport:
 
     if not adapter.gateway:
         findings.append(Finding(CheckState.ERROR, "默认网关", "未获取到默认网关。"))
-        _append_wifi_finding(adapter, findings)
         return _report(CheckState.ERROR, "缺少默认网关", findings)
 
-    _append_wifi_finding(adapter, findings)
     gateway_status = _append_gateway_findings(snapshot, findings)
     if gateway_status == "unavailable":
         return _report(CheckState.UNAVAILABLE, "无法完成明确判断", findings)
@@ -232,8 +233,12 @@ def analyze(snapshot: ProbeSnapshot) -> DiagnosisReport:
     public_stats = _public_stats(snapshot.internet_pings)
     any_public_reply = any(ping.reachable for ping in snapshot.internet_pings)
     public_path_reachable = any_public_reply or snapshot.tcp_reachable is True
-    explicit_public_ping_failure = bool(snapshot.internet_pings) and all(
-        ping.sent > 0 and not ping.reachable for ping in snapshot.internet_pings
+    explicit_public_ping_failure = all(
+        any(
+            ping.target == target and ping.sent > 0 and not ping.reachable
+            for ping in snapshot.internet_pings
+        )
+        for target in ("1.1.1.1", "8.8.8.8")
     )
     all_public_evidence_false = explicit_public_ping_failure and snapshot.tcp_reachable is False
 
