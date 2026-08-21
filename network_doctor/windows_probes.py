@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import errno
 import json
 import re
 import socket
@@ -127,6 +128,24 @@ def parse_adapter_json(output: str) -> tuple[AdapterInfo, ...]:
     return tuple(adapters)
 
 
+_DEFINITIVE_TCP_FAILURE_ERRNOS = {
+    errno.ECONNREFUSED,
+    errno.ETIMEDOUT,
+    errno.ENETUNREACH,
+    errno.EHOSTUNREACH,
+    10051,  # WSAENETUNREACH
+    10060,  # WSAETIMEDOUT
+    10061,  # WSAECONNREFUSED
+    10065,  # WSAEHOSTUNREACH
+}
+
+
+def _tcp_failure_is_definitive(error: OSError) -> bool:
+    return isinstance(error, (ConnectionRefusedError, TimeoutError)) or (
+        error.errno in _DEFINITIVE_TCP_FAILURE_ERRNOS
+    )
+
+
 class WindowsProbes:
     def __init__(
         self,
@@ -143,6 +162,12 @@ class WindowsProbes:
             ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", _ADAPTER_SCRIPT],
             10.0,
         )
+        if result.timed_out or result.returncode != 0 or not result.stdout.strip():
+            raise ProbeUnavailable(result.stderr or "无法运行网络适配器检测。")
+        try:
+            json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise ProbeUnavailable("网络适配器检测结果无法解析。") from error
         return parse_adapter_json(result.stdout)
 
     def ping(self, target: str, count: int, timeout_ms: int) -> PingStats:
@@ -150,13 +175,17 @@ class WindowsProbes:
             ["ping.exe", "-n", str(count), "-w", str(timeout_ms), target],
             count * timeout_ms / 1000 + 2,
         )
+        if result.timed_out or result.returncode < 0:
+            raise ProbeUnavailable(result.stderr or "无法运行 Ping 检测。")
         return parse_ping_output(result.stdout, target, sent=count)
 
-    def tcp_reachable(self, endpoints: Sequence[tuple[str, int]], timeout_seconds: float) -> bool:
+    def tcp_reachable(self, endpoints: Sequence[tuple[str, int]], timeout_seconds: float) -> bool | None:
         for endpoint in endpoints:
             try:
                 connection = self._create_connection(endpoint, timeout_seconds)
-            except OSError:
+            except OSError as error:
+                if not _tcp_failure_is_definitive(error):
+                    return None
                 continue
             connection.close()
             return True

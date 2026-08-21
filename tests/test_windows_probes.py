@@ -5,8 +5,10 @@ import subprocess
 import pytest
 
 import network_doctor.windows_probes as windows_probes
+from network_doctor.models import PingStats
 from network_doctor.windows_probes import (
     CommandResult,
+    ProbeUnavailable,
     WindowsProbes,
     parse_adapter_json,
     parse_ping_output,
@@ -139,7 +141,7 @@ def test_tcp_reachable_returns_false_after_every_injected_connection_failure():
 
     def failing_connection(endpoint, timeout_seconds):
         attempted.append((endpoint, timeout_seconds))
-        raise OSError("refused")
+        raise ConnectionRefusedError("refused")
 
     result = WindowsProbes(create_connection=failing_connection).tcp_reachable(
         [("1.1.1.1", 443), ("8.8.8.8", 53)], timeout_seconds=0.25
@@ -147,6 +149,18 @@ def test_tcp_reachable_returns_false_after_every_injected_connection_failure():
 
     assert result is False
     assert attempted == [(("1.1.1.1", 443), 0.25), (("8.8.8.8", 53), 0.25)]
+
+
+def test_tcp_reachable_returns_unavailable_for_local_permission_failure():
+    """Catches a local socket-permission failure being misreported as remote unreachability."""
+    def permission_denied(endpoint, timeout_seconds):
+        raise PermissionError("access denied")
+
+    result = WindowsProbes(create_connection=permission_denied).tcp_reachable(
+        [("1.1.1.1", 443)], timeout_seconds=0.25
+    )
+
+    assert result is None
 
 
 def test_tcp_reachable_stops_after_the_first_successful_injected_connection():
@@ -221,6 +235,52 @@ def test_collect_adapters_runs_noninteractive_powershell_and_parses_its_json():
     assert calls[0][1] == pytest.approx(10.0)
     assert adapters[0].name == "Ethernet"
     assert adapters[0].gateway == "10.0.0.1"
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        CommandResult(-1, "", "powershell.exe unavailable"),
+        CommandResult(-1, "", "", timed_out=True),
+        CommandResult(1, "", "PowerShell failed"),
+        CommandResult(0, "", ""),
+        CommandResult(0, "not JSON", ""),
+    ],
+)
+def test_collect_adapters_marks_command_or_parser_failures_as_unavailable(result):
+    """Catches PowerShell failures being misread as evidence that no adapter is connected."""
+    probes = WindowsProbes(command_runner=lambda args, timeout_seconds: result)
+
+    with pytest.raises(ProbeUnavailable):
+        probes.collect_adapters()
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        CommandResult(-1, "", "ping.exe unavailable"),
+        CommandResult(-1, "", "", timed_out=True),
+    ],
+)
+def test_ping_marks_command_launch_or_timeout_failure_as_unavailable(result):
+    """Catches an unstarted or timed-out ping being treated as a real zero-reply probe."""
+    probes = WindowsProbes(command_runner=lambda args, timeout_seconds: result)
+
+    with pytest.raises(ProbeUnavailable):
+        probes.ping("1.1.1.1", count=4, timeout_ms=1000)
+
+
+def test_ping_keeps_legitimate_nonzero_no_reply_result_as_network_evidence():
+    """Catches a probe that labels an executed, zero-reply ping as an unavailable command."""
+    probes = WindowsProbes(
+        command_runner=lambda args, timeout_seconds: CommandResult(
+            1, "Request timed out.\n", ""
+        )
+    )
+
+    result = probes.ping("1.1.1.1", count=4, timeout_ms=1000)
+
+    assert result == PingStats("1.1.1.1", 4, ())
 
 
 def test_wifi_signal_uses_netsh_output_and_returns_no_signal_when_absent():

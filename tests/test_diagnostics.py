@@ -1,6 +1,6 @@
 from network_doctor.diagnostics import collect_snapshot, run_diagnosis
 from network_doctor.models import AdapterInfo, DiagnosisReport, PingStats
-from network_doctor.windows_probes import ProbeUnavailable
+from network_doctor.windows_probes import CommandResult, ProbeUnavailable, WindowsProbes
 
 
 class FakeProbes:
@@ -136,3 +136,16 @@ def test_run_diagnosis_composes_collection_and_analysis_for_healthy_network():
 
     assert isinstance(report, DiagnosisReport)
     assert report.primary_problem == "未发现明显网络问题"
+
+
+def test_run_diagnosis_preserves_unavailable_adapter_command_as_inconclusive():
+    """Catches a failed adapter command crossing orchestration as a disconnected-adapter fault."""
+    report = run_diagnosis(
+        WindowsProbes(
+            command_runner=lambda args, timeout_seconds: CommandResult(
+                -1, "", "powershell.exe unavailable"
+            )
+        )
+    )
+
+    assert report.primary_problem == "无法完成明确判断"

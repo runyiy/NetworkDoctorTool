@@ -62,6 +62,21 @@ def test_no_connected_adapter_is_the_primary_problem():
     assert report.primary_problem == "未连接到可用网络适配器"
 
 
+def test_unavailable_adapter_evidence_does_not_become_a_missing_adapter_fault():
+    """Catches an unavailable adapter stage being diagnosed as a definite disconnected adapter."""
+    report = analyze(
+        replace(
+            healthy_snapshot(),
+            adapters=(),
+            active_adapter=None,
+            unavailable_checks=("网络适配器",),
+        )
+    )
+
+    assert report.overall is CheckState.UNAVAILABLE
+    assert report.primary_problem == "无法完成明确判断"
+
+
 def test_missing_ipv4_is_the_primary_problem_for_active_adapter():
     adapter = replace(healthy_snapshot().active_adapter, ipv4_addresses=())
 

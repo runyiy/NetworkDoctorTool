@@ -205,6 +205,11 @@ def analyze(snapshot: ProbeSnapshot) -> DiagnosisReport:
     findings: list[Finding] = []
     adapter = snapshot.active_adapter
     if adapter is None or not (adapter.enabled and adapter.connected):
+        if "网络适配器" in snapshot.unavailable_checks:
+            findings.append(
+                Finding(CheckState.UNAVAILABLE, "网络适配器", "未能完成网络适配器检测。")
+            )
+            return _report(CheckState.UNAVAILABLE, "无法完成明确判断", findings)
         findings.append(Finding(CheckState.ERROR, "网络适配器未连接", "未找到已启用且已连接的网络适配器。"))
         return _report(CheckState.ERROR, "未连接到可用网络适配器", findings)
 
