@@ -43,6 +43,12 @@ class CommandResult:
     timed_out: bool = False
 
 
+def _as_text(value: str | bytes | None) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value or ""
+
+
 def run_command(args: Sequence[str], timeout_seconds: float) -> CommandResult:
     try:
         completed = subprocess.run(
@@ -54,9 +60,11 @@ def run_command(args: Sequence[str], timeout_seconds: float) -> CommandResult:
             timeout=timeout_seconds,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        return CommandResult(completed.returncode, completed.stdout, completed.stderr)
+        return CommandResult(completed.returncode, _as_text(completed.stdout), _as_text(completed.stderr))
     except subprocess.TimeoutExpired as exc:
-        return CommandResult(-1, exc.stdout or "", exc.stderr or "", timed_out=True)
+        return CommandResult(-1, _as_text(exc.stdout), _as_text(exc.stderr), timed_out=True)
+    except OSError as exc:
+        return CommandResult(-1, "", str(exc))
 
 
 def parse_ping_output(output: str, target: str, sent: int) -> PingStats:

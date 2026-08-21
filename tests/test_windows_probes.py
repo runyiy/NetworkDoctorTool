@@ -1,14 +1,17 @@
 import threading
 import time
+import subprocess
 
 import pytest
 
+import network_doctor.windows_probes as windows_probes
 from network_doctor.windows_probes import (
     CommandResult,
     WindowsProbes,
     parse_adapter_json,
     parse_ping_output,
     parse_wifi_signal,
+    run_command,
 )
 
 
@@ -58,6 +61,59 @@ def test_adapter_json_accepts_one_object_and_normalizes_scalar_network_values():
 
     assert adapters[0].ipv4_addresses == ("192.168.1.4",)
     assert adapters[0].dns_servers == ("1.1.1.1",)
+
+
+@pytest.mark.parametrize("output", ["", "   \n\t", "not JSON"])
+def test_adapter_json_returns_no_adapters_for_empty_or_malformed_documents(output):
+    """Catches a parser that raises or invents an adapter for unusable JSON."""
+    assert parse_adapter_json(output) == ()
+
+
+def test_adapter_json_keeps_valid_list_records_and_ignores_malformed_entries():
+    """Catches a parser that rejects a JSON array or lets malformed records through."""
+    output = """[
+        {"Name":"Ethernet","Kind":"Ethernet","Connected":true,"Enabled":true,
+         "IPv4":["10.0.0.4","10.0.0.5"],"DhcpEnabled":false,
+         "Gateway":"10.0.0.1","Dns":["1.1.1.1","8.8.8.8"]},
+        {"Name":"missing kind"},
+        42
+    ]"""
+
+    adapters = parse_adapter_json(output)
+
+    assert len(adapters) == 1
+    assert adapters[0].name == "Ethernet"
+    assert adapters[0].ipv4_addresses == ("10.0.0.4", "10.0.0.5")
+    assert adapters[0].dns_servers == ("1.1.1.1", "8.8.8.8")
+
+
+def test_run_command_decodes_timeout_output_before_a_ping_parser_consumes_it(monkeypatch):
+    """Catches byte timeout output that would make the text ping parser raise TypeError."""
+    def timed_out_process(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            args[0], kwargs["timeout"], output=b"Reply from 1.1.1.1: time=12ms TTL=57", stderr=b"timed out"
+        )
+
+    monkeypatch.setattr(windows_probes.subprocess, "run", timed_out_process)
+
+    result = run_command(["ping.exe", "1.1.1.1"], timeout_seconds=1.0)
+
+    assert result.stdout == "Reply from 1.1.1.1: time=12ms TTL=57"
+    assert result.stderr == "timed out"
+    assert result.timed_out is True
+    assert parse_ping_output(result.stdout, "1.1.1.1", sent=1).latencies_ms == (12.0,)
+
+
+def test_run_command_returns_unavailable_evidence_when_process_launch_raises_os_error(monkeypatch):
+    """Catches built-in command launch errors that otherwise escape the probe boundary."""
+    def unavailable_process(*args, **kwargs):
+        raise OSError("ping.exe unavailable")
+
+    monkeypatch.setattr(windows_probes.subprocess, "run", unavailable_process)
+
+    result = run_command(["ping.exe", "1.1.1.1"], timeout_seconds=1.0)
+
+    assert result == CommandResult(-1, "", "ping.exe unavailable")
 
 
 def test_ping_uses_windows_count_and_timeout_flags_when_a_reply_arrives():
