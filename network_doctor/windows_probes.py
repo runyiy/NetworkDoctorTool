@@ -162,12 +162,24 @@ class WindowsProbes:
             ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", _ADAPTER_SCRIPT],
             10.0,
         )
-        if result.timed_out or result.returncode != 0 or not result.stdout.strip():
+        if result.timed_out or result.returncode != 0:
             raise ProbeUnavailable(result.stderr or "无法运行网络适配器检测。")
+        if not result.stdout.strip():
+            return ()
         try:
-            json.loads(result.stdout)
+            decoded = json.loads(result.stdout)
         except json.JSONDecodeError as error:
             raise ProbeUnavailable("网络适配器检测结果无法解析。") from error
+        records = decoded if isinstance(decoded, list) else [decoded]
+        if not all(
+            isinstance(record, dict)
+            and isinstance(record.get("Name"), str)
+            and record["Name"]
+            and isinstance(record.get("Kind"), str)
+            and record["Kind"]
+            for record in records
+        ):
+            raise ProbeUnavailable("网络适配器检测结果格式无效。")
         return parse_adapter_json(result.stdout)
 
     def ping(self, target: str, count: int, timeout_ms: int) -> PingStats:

@@ -243,8 +243,9 @@ def test_collect_adapters_runs_noninteractive_powershell_and_parses_its_json():
         CommandResult(-1, "", "powershell.exe unavailable"),
         CommandResult(-1, "", "", timed_out=True),
         CommandResult(1, "", "PowerShell failed"),
-        CommandResult(0, "", ""),
         CommandResult(0, "not JSON", ""),
+        CommandResult(0, "{}", ""),
+        CommandResult(0, "[42]", ""),
     ],
 )
 def test_collect_adapters_marks_command_or_parser_failures_as_unavailable(result):
@@ -253,6 +254,15 @@ def test_collect_adapters_marks_command_or_parser_failures_as_unavailable(result
 
     with pytest.raises(ProbeUnavailable):
         probes.collect_adapters()
+
+
+def test_collect_adapters_returns_no_adapters_for_successful_empty_stdout():
+    """Catches the production zero-row PowerShell output being treated as a probe failure."""
+    probes = WindowsProbes(
+        command_runner=lambda args, timeout_seconds: CommandResult(0, "", "")
+    )
+
+    assert probes.collect_adapters() == ()
 
 
 @pytest.mark.parametrize(
