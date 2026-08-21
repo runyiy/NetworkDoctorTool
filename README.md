@@ -2,9 +2,40 @@
 
 NetworkDoctor is a lightweight, Simplified Chinese network diagnostic tool for Windows 10 and Windows 11. It reads local network information without requiring administrator privileges and never changes DNS, IP address, network adapter, routing, or other system settings.
 
-## Using the Executable
+## Availability
 
-Double-click `NetworkDoctor.exe`, then click **Start Diagnosis** (`开始诊断`). When the diagnosis finishes, review the report or click **Copy Results** (`复制结果`). Click **Run Again** (`重新诊断`) to refresh the report.
+This repository contains the complete source code. It does not currently include a prebuilt `NetworkDoctor.exe` or a downloadable GitHub Release.
+
+You can use NetworkDoctor in either of these ways:
+
+1. Run `network_doctor_main.py` directly. This provides the same interface and diagnostic features as the packaged application.
+2. Build the optional standalone EXE yourself if you want a portable copy that can run without a separate Python installation.
+
+## Running from Source
+
+Requirements:
+
+- Windows 10 or Windows 11.
+- Python 3.12 is recommended and is the version used to validate this project.
+- Tkinter must be available. The standard Windows installer from python.org normally includes it.
+
+Clone the repository, or download and extract its ZIP archive. Then open PowerShell in the project directory and run:
+
+```powershell
+py .\network_doctor_main.py
+```
+
+If the `py` launcher is unavailable, use:
+
+```powershell
+python .\network_doctor_main.py
+```
+
+The application itself uses only the Python standard library. The packages in `requirements-dev.txt` are needed only for testing and building the EXE.
+
+## Using NetworkDoctor
+
+Click **Start Diagnosis** (`开始诊断`). When the diagnosis finishes, review the report or click **Copy Results** (`复制结果`). Click **Run Again** (`重新诊断`) to refresh the report.
 
 Each check uses one of four states:
 
@@ -20,28 +51,24 @@ Measured network quality is described with these labels:
 - Packet loss: Normal, Occasional Loss, Unstable Connection, or Severe Loss.
 - Wi-Fi signal: Weak, Fair, or Good.
 
-## Development and Testing
+## Building the Optional EXE
 
-Create a Python virtual environment named `.venv` in the project root, then install the development dependencies listed in `requirements-dev.txt`.
+Create a Python virtual environment, install the development dependencies, and run the build script:
 
-Run the complete test suite:
+```powershell
+py -m venv .venv
+& .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+& .\build.ps1
+```
+
+The build script runs the complete test suite and creates a single-file, windowed executable at `dist\NetworkDoctor.exe`. The resulting EXE can be moved to another folder or compatible Windows 10/11 computer and does not require Python to be installed.
+
+## Testing
+
+After creating `.venv` and installing `requirements-dev.txt`, run the complete test suite with:
 
 ```powershell
 & .\.venv\Scripts\python.exe -m pytest -q
-```
-
-Run the application from source:
-
-```powershell
-& .\.venv\Scripts\python.exe .\network_doctor_main.py
-```
-
-## Building
-
-The build script runs the complete test suite and then creates a single-file, windowed executable at `dist\NetworkDoctor.exe`:
-
-```powershell
-& .\build.ps1
 ```
 
 ## Diagnostic Limitations
