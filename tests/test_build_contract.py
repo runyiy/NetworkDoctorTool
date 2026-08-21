@@ -1,7 +1,23 @@
+import locale
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+
+
+def _decode_powershell_output(value: bytes) -> str:
+    for encoding in ("utf-8", "cp936", locale.getpreferredencoding(False)):
+        try:
+            return value.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return value.decode("utf-8", errors="replace")
+
+
+def test_powershell_output_decoder_preserves_cp936_chinese_error():
+    message = "未找到项目虚拟环境中的 Python"
+
+    assert _decode_powershell_output(message.encode("cp936")) == message
 
 
 def test_build_script_reports_missing_virtual_environment_python():
@@ -27,13 +43,10 @@ def test_build_script_reports_missing_virtual_environment_python():
             ],
             cwd=isolated_root,
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             check=False,
         )
 
     assert result.returncode != 0
-    output = result.stdout + result.stderr
+    output = _decode_powershell_output(result.stdout + result.stderr)
     assert "未找到项目虚拟环境中的" in output
     assert "Python" in output
