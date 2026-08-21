@@ -9,6 +9,8 @@ from network_doctor.models import (
     ProbeSnapshot,
 )
 
+PUBLIC_TARGETS = ("1.1.1.1", "8.8.8.8")
+
 
 def latency_label(value: float | None) -> str:
     if value is None:
@@ -200,6 +202,44 @@ def _append_public_quality_findings(
     return True, None
 
 
+def _append_unavailable_public_pings(
+    snapshot: ProbeSnapshot, findings: list[Finding]
+) -> bool:
+    pings_by_target = {ping.target: ping for ping in snapshot.internet_pings}
+    unavailable = False
+    for target in PUBLIC_TARGETS:
+        ping = pings_by_target.get(target)
+        if ping is None or ping.sent == 0 or ping.error is not None:
+            findings.append(
+                Finding(
+                    CheckState.UNAVAILABLE,
+                    f"公网 Ping（{target}）",
+                    "未能完成对此目标的 Ping 检测。",
+                )
+            )
+            unavailable = True
+    return unavailable
+
+
+def _append_tcp_fallback_finding(
+    snapshot: ProbeSnapshot, any_public_reply: bool, findings: list[Finding]
+) -> None:
+    if any_public_reply:
+        return
+    if snapshot.tcp_reachable is True:
+        findings.append(
+            Finding(CheckState.OK, "TCP 连通性", "TCP 备用检测可以访问公共网络。")
+        )
+    elif snapshot.tcp_reachable is False:
+        findings.append(
+            Finding(CheckState.ERROR, "TCP 连通性", "两个 TCP 测试端点均未能建立连接。")
+        )
+    else:
+        findings.append(
+            Finding(CheckState.UNAVAILABLE, "TCP 连通性", "未获得 TCP 备用检测结果。")
+        )
+
+
 def analyze(snapshot: ProbeSnapshot) -> DiagnosisReport:
     """Apply ordered, side-effect-free rules to a completed probe snapshot."""
     findings: list[Finding] = []
@@ -238,14 +278,9 @@ def analyze(snapshot: ProbeSnapshot) -> DiagnosisReport:
     public_stats = _public_stats(snapshot.internet_pings)
     any_public_reply = any(ping.reachable for ping in snapshot.internet_pings)
     public_path_reachable = any_public_reply or snapshot.tcp_reachable is True
-    explicit_public_ping_failure = all(
-        any(
-            ping.target == target and ping.sent > 0 and not ping.reachable
-            for ping in snapshot.internet_pings
-        )
-        for target in ("1.1.1.1", "8.8.8.8")
-    )
-    all_public_evidence_false = explicit_public_ping_failure and snapshot.tcp_reachable is False
+    unavailable_public_ping = _append_unavailable_public_pings(snapshot, findings)
+    _append_tcp_fallback_finding(snapshot, any_public_reply, findings)
+    all_public_evidence_false = not any_public_reply and snapshot.tcp_reachable is False
 
     if all_public_evidence_false:
         _append_public_quality_findings(public_stats, findings)
@@ -255,6 +290,8 @@ def analyze(snapshot: ProbeSnapshot) -> DiagnosisReport:
         return _report(CheckState.UNAVAILABLE, "无法完成明确判断", findings)
 
     quality_warning, quality_grade = _append_public_quality_findings(public_stats, findings)
+    if unavailable_public_ping:
+        quality_grade = None
     dns_values = tuple(result for _, result in snapshot.dns_results)
     if len(dns_values) >= 2 and all(result is False for result in dns_values):
         findings.append(Finding(CheckState.ERROR, "DNS 解析", "两个测试域名都无法解析。"))
@@ -301,13 +338,3 @@ def format_report(report: DiagnosisReport) -> str:
         for index, recommendation in enumerate(report.recommendations, start=1)
     )
     return "\n".join(lines)
-from ipaddress import IPv4Address, ip_address
-
-from network_doctor.models import (
-    AdapterInfo,
-    CheckState,
-    DiagnosisReport,
-    Finding,
-    PingStats,
-    ProbeSnapshot,
-)

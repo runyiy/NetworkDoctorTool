@@ -2,7 +2,8 @@ import importlib
 import queue
 import threading
 
-from network_doctor.models import CheckState, DiagnosisReport, Finding
+from network_doctor.diagnostics import run_diagnosis
+from network_doctor.models import AdapterInfo, CheckState, DiagnosisReport, Finding, PingStats
 
 
 def test_app_import_does_not_start_tkinter():
@@ -286,6 +287,53 @@ def test_start_diagnosis_turns_worker_exception_into_safe_ui_error():
     assert "诊断未完成" in app.output.content
     assert "Traceback" not in app.output.content
     assert app.start_button.state == "normal"
+
+
+def test_worker_renders_partial_observations_after_an_unexpected_probe_failure():
+    """Catches the UI replacing collected network evidence with only a two-line error."""
+    class PartiallyFailingProbes:
+        def collect_adapters(self):
+            return (
+                AdapterInfo(
+                    name="Wi-Fi",
+                    kind="Wi-Fi",
+                    connected=True,
+                    enabled=True,
+                    ipv4_addresses=("192.168.1.20",),
+                    gateway="192.168.1.1",
+                ),
+            )
+
+        def wifi_signal(self):
+            return 80
+
+        def ping(self, target, count, timeout_ms):
+            if target == "1.1.1.1":
+                raise RuntimeError("unexpected parser failure")
+            return PingStats(target, count, (3.0,) * count)
+
+        def tcp_reachable(self, endpoints, timeout_seconds):
+            raise AssertionError("one public Ping succeeds, so TCP fallback must not run")
+
+        def resolve(self, hostname, timeout_seconds):
+            return True
+
+    app = app_for_queue_tests()
+    app.diagnosis_runner = lambda *, on_progress: run_diagnosis(
+        PartiallyFailingProbes(), on_progress
+    )
+
+    app.start_diagnosis()
+    app._worker.join(timeout=1)
+    assert app._worker.is_alive() is False
+    app._drain_queue()
+
+    assert "[正常] 网络适配器" in app.output.content
+    assert "[正常] IPv4 地址" in app.output.content
+    assert "[正常] 默认网关连通性" in app.output.content
+    assert "[无法检测] 公网 Ping（1.1.1.1）" in app.output.content
+    assert "诊断未完成\n请稍后重试。" not in app.output.content
+    assert app.copy_button.state == "normal"
 
 
 def test_start_diagnosis_does_not_overlap_an_active_worker():

@@ -85,7 +85,10 @@ def parse_ping_output(output: str, target: str, sent: int) -> PingStats:
 
 def parse_wifi_signal(output: str) -> int | None:
     match = PERCENT_RE.search(output)
-    return int(match.group(1)) if match else None
+    if not match:
+        return None
+    value = int(match.group(1))
+    return value if 0 <= value <= 100 else None
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:
@@ -203,15 +206,19 @@ class WindowsProbes:
             return True
         return False
 
-    def resolve(self, hostname: str, timeout_seconds: float) -> Any | None:
+    def resolve(self, hostname: str, timeout_seconds: float) -> bool | None:
         result: dict[str, Any] = {}
         completed = threading.Event()
 
         def lookup() -> None:
             try:
-                result["value"] = self._getaddrinfo(hostname, None)
+                self._getaddrinfo(hostname, None)
+            except socket.gaierror:
+                result["value"] = False
             except OSError:
                 result["value"] = None
+            else:
+                result["value"] = True
             finally:
                 completed.set()
 
@@ -223,4 +230,6 @@ class WindowsProbes:
 
     def wifi_signal(self) -> int | None:
         result = self._command_runner(["netsh.exe", "wlan", "show", "interfaces"], 5.0)
+        if result.timed_out or result.returncode != 0:
+            raise ProbeUnavailable(result.stderr or "无法运行 Wi-Fi 信号检测。")
         return parse_wifi_signal(result.stdout)

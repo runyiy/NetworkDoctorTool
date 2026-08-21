@@ -192,6 +192,51 @@ def test_high_public_latency_is_a_quality_warning():
     assert report.primary_problem == "网络质量需要关注"
 
 
+def test_measured_public_packet_loss_changes_the_analyzed_report():
+    """Catches loss labels existing without packet loss influencing the real rule output."""
+    snapshot = replace(
+        healthy_snapshot(),
+        internet_pings=(
+            PingStats("1.1.1.1", 6, (20.0,) * 5),
+            PingStats("8.8.8.8", 6, (20.0,) * 6),
+        ),
+    )
+
+    report = analyze(snapshot)
+
+    assert report.overall is CheckState.WARNING
+    assert report.primary_problem == "网络质量需要关注"
+    assert any(
+        finding.title == "公网丢包"
+        and finding.state is CheckState.WARNING
+        and "连接不稳定" in finding.detail
+        for finding in report.findings
+    )
+
+
+def test_measured_public_jitter_changes_the_analyzed_report():
+    """Catches jitter labels existing without jitter influencing the real rule output."""
+    alternating = (10.0, 70.0, 10.0, 70.0, 10.0, 70.0)
+    snapshot = replace(
+        healthy_snapshot(),
+        internet_pings=(
+            PingStats("1.1.1.1", 6, alternating),
+            PingStats("8.8.8.8", 6, alternating),
+        ),
+    )
+
+    report = analyze(snapshot)
+
+    assert report.overall is CheckState.WARNING
+    assert report.primary_problem == "网络质量需要关注"
+    assert any(
+        finding.title == "公网抖动"
+        and finding.state is CheckState.WARNING
+        and "波动明显" in finding.detail
+        for finding in report.findings
+    )
+
+
 def test_healthy_result_includes_excellent_quality_grade():
     report = analyze(healthy_snapshot())
 
@@ -234,7 +279,7 @@ def test_wifi_signal_at_seventy_percent_is_reported_as_good():
     )
 
 
-def test_missing_second_public_ping_is_unavailable_even_when_tcp_fails():
+def test_definitive_tcp_failure_is_used_while_missing_public_ping_stays_visible():
     snapshot = replace(
         healthy_snapshot(),
         internet_pings=(PingStats("1.1.1.1", 6, ()),),
@@ -243,8 +288,12 @@ def test_missing_second_public_ping_is_unavailable_even_when_tcp_fails():
 
     report = analyze(snapshot)
 
-    assert report.overall is CheckState.UNAVAILABLE
-    assert report.primary_problem == "无法完成明确判断"
+    assert report.overall is CheckState.ERROR
+    assert report.primary_problem == "互联网连接可能异常"
+    assert any(
+        finding.state is CheckState.UNAVAILABLE and "8.8.8.8" in finding.title
+        for finding in report.findings
+    )
 
 
 def test_weak_wifi_is_preserved_when_ipv4_is_missing():

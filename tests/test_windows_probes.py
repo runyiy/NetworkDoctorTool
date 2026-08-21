@@ -1,6 +1,7 @@
+import socket
+import subprocess
 import threading
 import time
-import subprocess
 
 import pytest
 
@@ -49,6 +50,12 @@ def test_wifi_signal_parser_returns_the_percent_number_not_other_interface_numbe
 """
 
     assert parse_wifi_signal(output) == 74
+
+
+@pytest.mark.parametrize("value", [101, 999])
+def test_wifi_signal_parser_rejects_percentages_above_one_hundred(value):
+    """Catches malformed netsh percentages crossing into diagnostic evidence."""
+    assert parse_wifi_signal(f"Signal : {value}%") is None
 
 
 def test_adapter_json_accepts_one_object_and_normalizes_scalar_network_values():
@@ -193,6 +200,18 @@ def test_resolve_returns_none_when_the_injected_lookup_raises_an_os_error():
     assert result is None
 
 
+def test_resolve_returns_false_for_a_completed_dns_name_failure():
+    """Catches a negative DNS answer being collapsed into unavailable evidence."""
+    def missing_name(hostname, port):
+        raise socket.gaierror(socket.EAI_NONAME, "name not known")
+
+    result = WindowsProbes(getaddrinfo=missing_name).resolve(
+        "missing.example", timeout_seconds=0.1
+    )
+
+    assert result is False
+
+
 def test_resolve_returns_none_after_a_bounded_wait_for_a_stuck_lookup():
     """Catches a resolver that invokes a blocking getaddrinfo call on the caller thread."""
     started = threading.Event()
@@ -293,15 +312,31 @@ def test_ping_keeps_legitimate_nonzero_no_reply_result_as_network_evidence():
     assert result == PingStats("1.1.1.1", 4, ())
 
 
-def test_wifi_signal_uses_netsh_output_and_returns_no_signal_when_absent():
+def test_wifi_signal_uses_successful_netsh_output_and_returns_no_signal_when_absent():
     """Catches a probe that does not use the WLAN command or guesses a missing signal."""
     calls = []
 
     def fake_runner(args, timeout_seconds):
         calls.append((args, timeout_seconds))
-        return CommandResult(1, "There is no wireless interface on the system.", "")
+        return CommandResult(0, "There is no wireless interface on the system.", "")
 
     signal = WindowsProbes(command_runner=fake_runner).wifi_signal()
 
     assert signal is None
     assert calls == [(["netsh.exe", "wlan", "show", "interfaces"], pytest.approx(5.0))]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        CommandResult(-1, "Signal : 74%", "netsh.exe unavailable"),
+        CommandResult(-1, "Signal : 74%", "", timed_out=True),
+        CommandResult(1, "Signal : 74%", "netsh failed"),
+    ],
+)
+def test_wifi_signal_marks_launch_timeout_or_nonzero_results_unavailable(result):
+    """Catches partial netsh stdout being parsed after the command did not complete successfully."""
+    probes = WindowsProbes(command_runner=lambda args, timeout_seconds: result)
+
+    with pytest.raises(ProbeUnavailable):
+        probes.wifi_signal()

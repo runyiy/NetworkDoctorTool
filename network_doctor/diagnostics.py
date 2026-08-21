@@ -6,7 +6,7 @@ from ipaddress import IPv4Address, ip_address
 
 from network_doctor.analysis import analyze
 from network_doctor.models import AdapterInfo, DiagnosisReport, PingStats, ProbeSnapshot
-from network_doctor.windows_probes import ProbeUnavailable, WindowsProbes
+from network_doctor.windows_probes import WindowsProbes
 
 
 PUBLIC_TARGETS = ("1.1.1.1", "8.8.8.8")
@@ -65,7 +65,7 @@ def collect_snapshot(
     _notify(on_progress, "正在检查网络适配器……", 10)
     try:
         adapters = tuple(probes.collect_adapters())
-    except ProbeUnavailable:
+    except Exception:
         unavailable("网络适配器")
     else:
         active_adapter = _select_active_adapter(adapters)
@@ -74,7 +74,7 @@ def collect_snapshot(
         _notify(on_progress, "正在检查 Wi-Fi 信号……", 20)
         try:
             signal = probes.wifi_signal()
-        except ProbeUnavailable:
+        except Exception:
             unavailable("Wi-Fi 信号")
         else:
             active_adapter = replace(active_adapter, wifi_signal_percent=signal)
@@ -85,7 +85,7 @@ def collect_snapshot(
             gateway_ping = probes.ping(
                 active_adapter.gateway, GATEWAY_PING_COUNT, PING_TIMEOUT_MS
             )
-        except ProbeUnavailable:
+        except Exception:
             unavailable("默认网关")
 
     if gateway_ping is not None and gateway_ping.reachable:
@@ -95,24 +95,26 @@ def collect_snapshot(
                 internet_pings.append(
                     probes.ping(target, PUBLIC_PING_COUNT, PING_TIMEOUT_MS)
                 )
-            except ProbeUnavailable:
-                unavailable("公网 Ping")
+            except Exception as error:
+                internet_pings.append(PingStats(target, 0, error=str(error)))
+                unavailable(f"公网 Ping {target}")
 
-        if len(internet_pings) == len(PUBLIC_TARGETS) and not any(
-            ping.reachable for ping in internet_pings
-        ):
+        if not any(ping.reachable for ping in internet_pings):
             _notify(on_progress, "正在进行 TCP 连通性检测……", 70)
             try:
                 tcp_reachable = probes.tcp_reachable(TCP_ENDPOINTS, TCP_TIMEOUT_SECONDS)
-            except ProbeUnavailable:
+            except Exception:
                 unavailable("TCP 连通性")
+            else:
+                if tcp_reachable is None:
+                    unavailable("TCP 连通性")
 
         if any(ping.reachable for ping in internet_pings) or tcp_reachable is True:
             _notify(on_progress, "正在测试 DNS 解析……", 85)
             for hostname in DNS_TARGETS:
                 try:
                     result = probes.resolve(hostname, DNS_TIMEOUT_SECONDS)
-                except ProbeUnavailable:
+                except Exception:
                     unavailable("DNS 解析")
                     dns_results.append((hostname, None))
                 else:
