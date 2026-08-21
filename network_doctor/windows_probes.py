@@ -76,11 +76,10 @@ def run_command(args: Sequence[str], timeout_seconds: float) -> CommandResult:
 def parse_ping_output(output: str, target: str, sent: int) -> PingStats:
     latencies = []
     for line in output.splitlines():
-        if "ttl=" not in line.lower():
+        matches = PING_TIME_RE.findall(line)
+        if len(matches) != 1:
             continue
-        match = PING_TIME_RE.search(line)
-        if match:
-            latencies.append(float(match.group(1)))
+        latencies.append(float(matches[0]))
     return PingStats(target=target, sent=sent, latencies_ms=tuple(latencies))
 
 
