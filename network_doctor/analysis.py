@@ -1,4 +1,4 @@
-from ipaddress import IPv4Address, ip_address
+from ipaddress import IPv4Address, IPv6Address, ip_address
 
 from network_doctor.models import (
     AdapterInfo,
@@ -9,7 +9,8 @@ from network_doctor.models import (
     ProbeSnapshot,
 )
 
-PUBLIC_TARGETS = ("1.1.1.1", "8.8.8.8")
+IPV4_PUBLIC_TARGETS = ("1.1.1.1", "8.8.8.8")
+IPV6_PUBLIC_TARGETS = ("2606:4700:4700::1111", "2001:4860:4860::8888")
 
 
 def latency_label(value: float | None) -> str:
@@ -68,6 +69,17 @@ def _ipv4_addresses(adapter: AdapterInfo) -> tuple[IPv4Address, ...]:
         if isinstance(parsed, IPv4Address):
             addresses.append(parsed)
     return tuple(addresses)
+
+
+def _has_global_ipv6(adapter: AdapterInfo) -> bool:
+    for value in adapter.ipv6_addresses:
+        try:
+            address = ip_address(value)
+        except ValueError:
+            continue
+        if isinstance(address, IPv6Address) and address.is_global:
+            return True
+    return False
 
 
 def _recommendations(primary_problem: str) -> tuple[str, ...]:
@@ -161,35 +173,59 @@ def _append_gateway_findings(snapshot: ProbeSnapshot, findings: list[Finding]) -
 
 
 def _append_public_quality_findings(
-    stats: PingStats, findings: list[Finding]
+    stats: PingStats, findings: list[Finding], family: str = "IPv4"
 ) -> tuple[bool, str | None]:
     if stats.packet_loss_percent is None:
-        findings.append(Finding(CheckState.UNAVAILABLE, "公网质量", "未发送公网 Ping 探测，无法计算质量指标。"))
+        findings.append(
+            Finding(
+                CheckState.UNAVAILABLE,
+                f"{family} 公网质量",
+                f"未发送 {family} 公网 Ping 探测，无法计算质量指标。",
+            )
+        )
         return False, None
 
     has_warning = False
     loss = stats.packet_loss_percent
     loss_state = CheckState.OK if loss == 0 else CheckState.WARNING
-    findings.append(Finding(loss_state, "公网丢包", f"丢包率为 {loss:.2f}%，{loss_label(loss)}。"))
+    findings.append(
+        Finding(loss_state, f"{family} 公网丢包", f"丢包率为 {loss:.2f}%，{loss_label(loss)}。")
+    )
     has_warning = loss_state is CheckState.WARNING
 
     latency = stats.average_latency_ms
     if latency is None:
-        findings.append(Finding(CheckState.UNAVAILABLE, "公网延迟", "没有成功的公网 Ping 响应。"))
+        findings.append(
+            Finding(CheckState.UNAVAILABLE, f"{family} 公网延迟", "没有成功的公网 Ping 响应。")
+        )
     else:
         latency_state = CheckState.WARNING if latency >= 70 else CheckState.OK
         findings.append(
-            Finding(latency_state, "公网延迟", f"平均延迟为 {latency:.2f} ms，{latency_label(latency)}。")
+            Finding(
+                latency_state,
+                f"{family} 公网延迟",
+                f"平均延迟为 {latency:.2f} ms，{latency_label(latency)}。",
+            )
         )
         has_warning = has_warning or latency_state is CheckState.WARNING
 
     jitter = stats.jitter_ms
     if jitter is None:
-        findings.append(Finding(CheckState.UNAVAILABLE, "公网抖动", "成功响应不足两次，无法计算抖动。"))
+        findings.append(
+            Finding(
+                CheckState.UNAVAILABLE,
+                f"{family} 公网抖动",
+                "成功响应不足两次，无法计算抖动。",
+            )
+        )
     else:
         jitter_state = CheckState.WARNING if jitter >= 30 else CheckState.OK
         findings.append(
-            Finding(jitter_state, "公网抖动", f"抖动为 {jitter:.2f} ms，{jitter_label(jitter)}。")
+            Finding(
+                jitter_state,
+                f"{family} 公网抖动",
+                f"抖动为 {jitter:.2f} ms，{jitter_label(jitter)}。",
+            )
         )
         has_warning = has_warning or jitter_state is CheckState.WARNING
 
@@ -203,21 +239,32 @@ def _append_public_quality_findings(
 
 
 def _append_unavailable_public_pings(
-    snapshot: ProbeSnapshot, findings: list[Finding]
+    pings: tuple[PingStats, ...],
+    targets: tuple[str, ...],
+    family: str,
+    findings: list[Finding],
 ) -> bool:
-    pings_by_target = {ping.target: ping for ping in snapshot.internet_pings}
+    pings_by_target = {ping.target: ping for ping in pings}
     unavailable = False
-    for target in PUBLIC_TARGETS:
+    for target in targets:
         ping = pings_by_target.get(target)
         if ping is None or ping.sent == 0 or ping.error is not None:
             findings.append(
                 Finding(
                     CheckState.UNAVAILABLE,
-                    f"公网 Ping（{target}）",
+                    f"{family} 公网 Ping（{target}）",
                     "未能完成对此目标的 Ping 检测。",
                 )
             )
             unavailable = True
+    if unavailable and any(ping.sent > 0 for ping in pings):
+        findings.append(
+            Finding(
+                CheckState.UNAVAILABLE,
+                f"{family} 检测范围",
+                f"{family} 统计仅基于可用目标，不能代表全部 {family} 路径。",
+            )
+        )
     return unavailable
 
 
@@ -278,7 +325,12 @@ def analyze(snapshot: ProbeSnapshot) -> DiagnosisReport:
     public_stats = _public_stats(snapshot.internet_pings)
     any_public_reply = any(ping.reachable for ping in snapshot.internet_pings)
     public_path_reachable = any_public_reply or snapshot.tcp_reachable is True
-    unavailable_public_ping = _append_unavailable_public_pings(snapshot, findings)
+    unavailable_public_ping = _append_unavailable_public_pings(
+        snapshot.internet_pings,
+        IPV4_PUBLIC_TARGETS,
+        "IPv4",
+        findings,
+    )
     _append_tcp_fallback_finding(snapshot, any_public_reply, findings)
     all_public_evidence_false = not any_public_reply and snapshot.tcp_reachable is False
 
@@ -289,9 +341,36 @@ def analyze(snapshot: ProbeSnapshot) -> DiagnosisReport:
         _append_public_quality_findings(public_stats, findings)
         return _report(CheckState.UNAVAILABLE, "无法完成明确判断", findings)
 
-    quality_warning, quality_grade = _append_public_quality_findings(public_stats, findings)
+    quality_warning, quality_grade = _append_public_quality_findings(
+        public_stats, findings, "IPv4"
+    )
     if unavailable_public_ping:
         quality_grade = None
+
+    ipv6_not_configured = not _has_global_ipv6(adapter)
+    if ipv6_not_configured:
+        findings.append(
+            Finding(
+                CheckState.UNAVAILABLE,
+                "IPv6 公网检测",
+                "当前网络未配置可用的公网 IPv6 地址，已跳过 IPv6 检测。",
+            )
+        )
+    else:
+        unavailable_ipv6_ping = _append_unavailable_public_pings(
+            snapshot.ipv6_pings,
+            IPV6_PUBLIC_TARGETS,
+            "IPv6",
+            findings,
+        )
+        ipv6_warning, ipv6_grade = _append_public_quality_findings(
+            _public_stats(snapshot.ipv6_pings), findings, "IPv6"
+        )
+        quality_warning = quality_warning or ipv6_warning
+        if unavailable_ipv6_ping or ipv6_grade is None:
+            quality_grade = None
+        elif quality_grade == "优秀" and ipv6_grade == "良好":
+            quality_grade = "良好"
     dns_values = tuple(result for _, result in snapshot.dns_results)
     if len(dns_values) >= 2 and all(result is False for result in dns_values):
         findings.append(Finding(CheckState.ERROR, "DNS 解析", "两个测试域名都无法解析。"))
@@ -306,7 +385,11 @@ def analyze(snapshot: ProbeSnapshot) -> DiagnosisReport:
 
     if quality_warning or any(finding.state is CheckState.WARNING for finding in findings):
         return _report(CheckState.WARNING, "网络质量需要关注", findings, quality_grade)
-    if any(finding.state is CheckState.UNAVAILABLE for finding in findings):
+    if any(
+        finding.state is CheckState.UNAVAILABLE
+        and finding.title != "IPv6 公网检测"
+        for finding in findings
+    ):
         return _report(CheckState.UNAVAILABLE, "无法完成明确判断", findings, quality_grade)
     return _report(CheckState.OK, "未发现明显网络问题", findings, quality_grade)
 

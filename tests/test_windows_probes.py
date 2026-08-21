@@ -62,13 +62,15 @@ def test_adapter_json_accepts_one_object_and_normalizes_scalar_network_values():
     """Catches a parser that assumes PowerShell always emits an array."""
     output = (
         '{"Name":"Wi-Fi","Kind":"Wi-Fi","Connected":true,"Enabled":true,'
-        '"IPv4":"192.168.1.4","DhcpEnabled":true,"Gateway":"192.168.1.1",'
+        '"IPv4":"192.168.1.4","IPv6":"2001:db8::4",'
+        '"DhcpEnabled":true,"Gateway":"192.168.1.1",'
         '"Dns":["1.1.1.1"]}'
     )
 
     adapters = parse_adapter_json(output)
 
     assert adapters[0].ipv4_addresses == ("192.168.1.4",)
+    assert adapters[0].ipv6_addresses == ("2001:db8::4",)
     assert adapters[0].dns_servers == ("1.1.1.1",)
 
 
@@ -140,6 +142,35 @@ def test_ping_uses_windows_count_and_timeout_flags_when_a_reply_arrives():
     assert calls == [(["ping.exe", "-n", "4", "-w", "1000", "1.1.1.1"], pytest.approx(6.0))]
     assert result.reachable is True
     assert result.latencies_ms == (12.0,)
+
+
+def test_ping_uses_explicit_ipv6_flag_for_an_ipv6_path():
+    """Catches an IPv6 diagnostic silently following Windows' default address family."""
+    calls = []
+
+    def fake_runner(args, timeout_seconds):
+        calls.append((args, timeout_seconds))
+        return CommandResult(0, "Reply from 2001:4860:4860::8888: time=42ms TTL=116", "")
+
+    result = WindowsProbes(command_runner=fake_runner).ping(
+        "2001:4860:4860::8888", count=10, timeout_ms=1000, address_family=6
+    )
+
+    assert calls == [
+        (
+            [
+                "ping.exe",
+                "-6",
+                "-n",
+                "10",
+                "-w",
+                "1000",
+                "2001:4860:4860::8888",
+            ],
+            pytest.approx(12.0),
+        )
+    ]
+    assert result.latencies_ms == (42.0,)
 
 
 def test_tcp_reachable_returns_false_after_every_injected_connection_failure():

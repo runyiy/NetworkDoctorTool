@@ -48,8 +48,9 @@ class FakeProbes:
         self.calls.append("wifi_signal")
         return 80
 
-    def ping(self, target, count, timeout_ms):
-        self.calls.append(f"ping:{target}")
+    def ping(self, target, count, timeout_ms, address_family=None):
+        family = "ping6" if address_family == 6 else "ping"
+        self.calls.append(f"{family}:{target}")
         if target in self.public_unavailable:
             raise ProbeUnavailable(f"{target} ping unavailable")
         replies = (3.0,) * count if target == "192.168.1.1" or self.public_replies else ()
@@ -103,8 +104,8 @@ def test_collect_snapshot_uses_tcp_fallback_after_both_public_pings_have_no_repl
         "tcp_reachable",
     ]
     assert snapshot.internet_pings == (
-        PingStats("1.1.1.1", 6, ()),
-        PingStats("8.8.8.8", 6, ()),
+        PingStats("1.1.1.1", 10, ()),
+        PingStats("8.8.8.8", 10, ()),
     )
     assert snapshot.tcp_reachable is False
 
@@ -149,12 +150,12 @@ def test_collect_snapshot_uses_tcp_when_no_public_ping_succeeds_and_preserves_ta
 
     assert "tcp_reachable" in probes.calls
     assert [(ping.target, ping.sent) for ping in snapshot.internet_pings] == [
-        ("1.1.1.1", 0 if "1.1.1.1" in unavailable_targets else 6),
-        ("8.8.8.8", 0 if "8.8.8.8" in unavailable_targets else 6),
+        ("1.1.1.1", 0 if "1.1.1.1" in unavailable_targets else 10),
+        ("8.8.8.8", 0 if "8.8.8.8" in unavailable_targets else 10),
     ]
     assert {
-        check for check in snapshot.unavailable_checks if check.startswith("公网 Ping")
-    } == {f"公网 Ping {target}" for target in unavailable_targets}
+        check for check in snapshot.unavailable_checks if check.startswith("IPv4 公网 Ping")
+    } == {f"IPv4 公网 Ping {target}" for target in unavailable_targets}
 
 
 def test_successful_public_ping_does_not_hide_the_other_unavailable_target():
@@ -184,7 +185,7 @@ def test_definitive_tcp_failure_can_diagnose_internet_fault_without_inventing_pi
 
     assert report.primary_problem == "互联网连接可能异常"
     assert sum(
-        finding.state is CheckState.UNAVAILABLE and "公网 Ping" in finding.title
+        finding.state is CheckState.UNAVAILABLE and "IPv4 公网 Ping" in finding.title
         for finding in report.findings
     ) == 2
     assert not any(
@@ -249,6 +250,35 @@ def test_collect_snapshot_prefers_connected_adapter_with_routable_ipv4_and_gatew
     snapshot = collect_snapshot(FakeProbes(adapters=(link_local, routed)))
 
     assert snapshot.active_adapter.name == "Wi-Fi"
+
+
+def test_collect_snapshot_tests_global_ipv6_separately_with_ten_samples():
+    """Catches a collector that labels IPv4 healthy while never measuring the active IPv6 path."""
+    adapter = AdapterInfo(
+        name="Wi-Fi",
+        kind="Wi-Fi",
+        connected=True,
+        enabled=True,
+        ipv4_addresses=("192.168.1.20",),
+        ipv6_addresses=("2001:4860:1234::20",),
+        gateway="192.168.1.1",
+    )
+    probes = FakeProbes(adapters=(adapter,))
+
+    snapshot = collect_snapshot(probes)
+
+    assert [ping.target for ping in snapshot.ipv6_pings] == [
+        "2606:4700:4700::1111",
+        "2001:4860:4860::8888",
+    ]
+    assert all(ping.sent == 10 for ping in snapshot.internet_pings)
+    assert all(ping.sent == 10 for ping in snapshot.ipv6_pings)
+    assert {
+        call for call in probes.calls if call.startswith("ping6:")
+    } == {
+        "ping6:2606:4700:4700::1111",
+        "ping6:2001:4860:4860::8888",
+    }
 
 
 def test_run_diagnosis_composes_collection_and_analysis_for_healthy_network():

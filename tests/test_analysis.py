@@ -207,7 +207,7 @@ def test_measured_public_packet_loss_changes_the_analyzed_report():
     assert report.overall is CheckState.WARNING
     assert report.primary_problem == "网络质量需要关注"
     assert any(
-        finding.title == "公网丢包"
+        finding.title == "IPv4 公网丢包"
         and finding.state is CheckState.WARNING
         and "连接不稳定" in finding.detail
         for finding in report.findings
@@ -230,7 +230,7 @@ def test_measured_public_jitter_changes_the_analyzed_report():
     assert report.overall is CheckState.WARNING
     assert report.primary_problem == "网络质量需要关注"
     assert any(
-        finding.title == "公网抖动"
+        finding.title == "IPv4 公网抖动"
         and finding.state is CheckState.WARNING
         and "波动明显" in finding.detail
         for finding in report.findings
@@ -243,6 +243,73 @@ def test_healthy_result_includes_excellent_quality_grade():
     assert report.overall is CheckState.OK
     assert report.primary_problem == "未发现明显网络问题"
     assert report.quality_grade == "优秀"
+    assert any(
+        finding.title == "IPv6 公网检测"
+        and finding.state is CheckState.UNAVAILABLE
+        and "未配置" in finding.detail
+        for finding in report.findings
+    )
+
+
+def test_unstable_ipv6_path_is_not_hidden_by_healthy_ipv4_results():
+    """Catches the screenshot scenario where good IPv4 statistics mask unstable IPv6."""
+    adapter = replace(
+        healthy_snapshot().active_adapter,
+        ipv6_addresses=("2001:4860:1234::20",),
+    )
+    snapshot = replace(
+        healthy_snapshot(),
+        active_adapter=adapter,
+        ipv6_pings=(
+            PingStats(
+                "2606:4700:4700::1111",
+                10,
+                (35.0, 2224.0, 98.0, 177.0, 584.0, 79.0, 858.0),
+            ),
+            PingStats(
+                "2001:4860:4860::8888",
+                10,
+                (36.0, 573.0, 983.0, 1731.0, 2497.0, 2054.0, 3209.0),
+            ),
+        ),
+    )
+
+    report = analyze(snapshot)
+
+    assert report.overall is CheckState.WARNING
+    assert report.primary_problem == "网络质量需要关注"
+    assert any(
+        finding.title == "IPv6 公网丢包" and finding.state is CheckState.WARNING
+        for finding in report.findings
+    )
+    assert any(
+        finding.title == "IPv6 公网延迟" and finding.state is CheckState.WARNING
+        for finding in report.findings
+    )
+    assert any(
+        finding.title == "IPv6 公网抖动" and finding.state is CheckState.WARNING
+        for finding in report.findings
+    )
+
+
+def test_partial_ipv4_statistics_say_they_only_cover_available_targets():
+    """Catches a zero-loss summary implying both IPv4 targets were successfully measured."""
+    snapshot = replace(
+        healthy_snapshot(),
+        internet_pings=(
+            PingStats("1.1.1.1", 0, (), error="ping unavailable"),
+            PingStats("8.8.8.8", 10, (32.0,) * 10),
+        ),
+    )
+
+    report = analyze(snapshot)
+
+    assert any(
+        finding.title == "IPv4 检测范围"
+        and finding.state is CheckState.UNAVAILABLE
+        and "仅基于可用目标" in finding.detail
+        for finding in report.findings
+    )
 
 
 def test_format_report_contains_required_sections_and_plain_text_markers():

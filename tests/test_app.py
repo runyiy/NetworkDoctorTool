@@ -332,7 +332,7 @@ def test_worker_renders_partial_observations_after_an_unexpected_probe_failure()
     assert "[正常] 网络适配器" in app.output.content
     assert "[正常] IPv4 地址" in app.output.content
     assert "[正常] 默认网关连通性" in app.output.content
-    assert "[无法检测] 公网 Ping（1.1.1.1）" in app.output.content
+    assert "[无法检测] IPv4 公网 Ping（1.1.1.1）" in app.output.content
     assert "诊断未完成\n请稍后重试。" not in app.output.content
     assert app.copy_button.state == "normal"
 

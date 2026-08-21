@@ -17,6 +17,7 @@ class AdapterInfo:
     connected: bool
     enabled: bool
     ipv4_addresses: tuple[str, ...] = ()
+    ipv6_addresses: tuple[str, ...] = ()
     dhcp_enabled: bool | None = None
     gateway: str | None = None
     dns_servers: tuple[str, ...] = ()
@@ -65,6 +66,7 @@ class ProbeSnapshot:
     tcp_reachable: bool | None
     dns_results: tuple[tuple[str, bool | None], ...]
     unavailable_checks: tuple[str, ...] = ()
+    ipv6_pings: tuple[PingStats, ...] = ()
 
 
 @dataclass(frozen=True)
