@@ -31,6 +31,7 @@ $rows = foreach ($config in Get-NetIPConfiguration) {
         Connected = $true
         Enabled = $true
         IPv4 = @($config.IPv4Address | ForEach-Object { $_.IPAddress })
+        IPv6 = @($config.IPv6Address | ForEach-Object { $_.IPAddress })
         DhcpEnabled = (@($ipv4Interface | ForEach-Object { [string]$_.Dhcp }) -contains 'Enabled')
         Gateway = [string](@($config.IPv4DefaultGateway | ForEach-Object { $_.NextHop }) | Select-Object -First 1)
         Dns = @($config.DNSServer.ServerAddresses)
@@ -123,6 +124,7 @@ def parse_adapter_json(output: str) -> tuple[AdapterInfo, ...]:
                 connected=record.get("Connected") is True,
                 enabled=record.get("Enabled") is True,
                 ipv4_addresses=_string_tuple(record.get("IPv4")),
+                ipv6_addresses=_string_tuple(record.get("IPv6")),
                 dhcp_enabled=dhcp_enabled if isinstance(dhcp_enabled, bool) else None,
                 gateway=record.get("Gateway") if isinstance(record.get("Gateway"), str) else None,
                 dns_servers=_string_tuple(record.get("Dns")),
@@ -185,9 +187,24 @@ class WindowsProbes:
             raise ProbeUnavailable("网络适配器检测结果格式无效。")
         return parse_adapter_json(result.stdout)
 
-    def ping(self, target: str, count: int, timeout_ms: int) -> PingStats:
+    def ping(
+        self,
+        target: str,
+        count: int,
+        timeout_ms: int,
+        address_family: int | None = None,
+    ) -> PingStats:
+        family_flag = [f"-{address_family}"] if address_family in (4, 6) else []
         result = self._command_runner(
-            ["ping.exe", "-n", str(count), "-w", str(timeout_ms), target],
+            [
+                "ping.exe",
+                *family_flag,
+                "-n",
+                str(count),
+                "-w",
+                str(timeout_ms),
+                target,
+            ],
             count * timeout_ms / 1000 + 2,
         )
         if result.timed_out or result.returncode < 0:
