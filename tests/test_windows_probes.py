@@ -42,6 +42,35 @@ def test_ping_parser_extracts_chinese_reply_times_without_translating_output():
     assert stats.latencies_ms == (3.0, 1.0)
 
 
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        (
+            """Reply from 2606:4700:4700::1111: time=15ms
+Reply from 2606:4700:4700::1111: time=107ms
+Reply from 2606:4700:4700::1111: time=41ms
+Minimum = 15ms, Maximum = 107ms, Average = 54ms""",
+            (15.0, 107.0, 41.0),
+        ),
+        (
+            """来自 2001:4860:4827:7700:: 的回复: 时间=20ms
+来自 2001:4860:4827:7700:: 的回复: 时间=15ms
+来自 2001:4860:4827:7700:: 的回复: 时间=68ms
+最短 = 14ms，最长 = 68ms，平均 = 29ms""",
+            (20.0, 15.0, 68.0),
+        ),
+    ],
+)
+def test_ping_parser_keeps_ipv6_replies_without_ttl_and_ignores_summary(
+    output, expected
+):
+    """Catches successful Windows IPv6 replies being misreported as 100% loss."""
+    stats = parse_ping_output(output, "ipv6-target", sent=3)
+
+    assert stats.latencies_ms == expected
+    assert stats.packet_loss_percent == 0.0
+
+
 def test_wifi_signal_parser_returns_the_percent_number_not_other_interface_numbers():
     """Catches a parser that returns an incidental number instead of signal percent."""
     output = """    BSSID                  : 12:34:56:78:90:12
