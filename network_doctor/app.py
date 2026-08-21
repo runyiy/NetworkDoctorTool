@@ -122,8 +122,8 @@ class NetworkDoctorApp:
                 self.output.delete("1.0", tk.END)
                 self.output.insert(tk.END, self._report_text)
                 self.status_var.set("诊断完成")
-                self.progress["value"] = 100
                 self.progress.stop()
+                self.progress["value"] = 100
                 self.start_button.configure(state="normal", text="重新诊断")
                 self.copy_button.configure(state="normal")
                 completed = True

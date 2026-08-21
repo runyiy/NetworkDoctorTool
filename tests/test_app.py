@@ -35,6 +35,7 @@ class FakeProgress:
     def stop(self):
         self.stopped = True
         self.running = False
+        self.value = 0
 
     def start(self, interval):
         self.running = True
