@@ -24,3 +24,9 @@ def test_no_replies_is_unreachable_and_full_loss():
     assert stats.reachable is False
     assert stats.packet_loss_percent == 100.0
     assert stats.average_latency_ms is None
+
+
+def test_zero_sent_probes_have_unavailable_packet_loss():
+    stats = PingStats(target="1.1.1.1", sent=0)
+
+    assert stats.packet_loss_percent is None

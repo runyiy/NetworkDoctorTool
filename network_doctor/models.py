@@ -31,9 +31,9 @@ class PingStats:
     error: str | None = None
 
     @property
-    def packet_loss_percent(self) -> float:
+    def packet_loss_percent(self) -> float | None:
         if self.sent == 0:
-            return 100.0
+            return None
         return round((self.sent - len(self.latencies_ms)) / self.sent * 100, 2)
 
     @property
