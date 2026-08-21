@@ -127,6 +127,7 @@ def test_drain_queue_renders_result_and_reenables_actions():
     assert app.start_button.state == "normal"
     assert app.copy_button.state == "normal"
     assert app.progress.stopped is True
+    assert app.progress.value == 100
     assert app._polling is False
     assert app.root.scheduled == []
 
@@ -175,8 +176,11 @@ def test_start_diagnosis_runs_in_background_and_delivers_messages():
     assert app.start_button.state == "disabled"
     assert app.copy_button.state == "disabled"
     assert app.output.content == ""
-    assert app.progress.running is True
+    assert app.progress.running is False
+    assert app.progress.value == 0
     assert completed.wait(timeout=1)
+    app._worker.join(timeout=1)
+    assert app._worker.is_alive() is False
 
     app._drain_queue()
 
@@ -198,6 +202,8 @@ def test_start_diagnosis_turns_worker_exception_into_safe_ui_error():
     app.start_diagnosis()
 
     assert completed.wait(timeout=1)
+    app._worker.join(timeout=1)
+    assert app._worker.is_alive() is False
     app._drain_queue()
 
     assert "诊断未完成" in app.output.content

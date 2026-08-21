@@ -72,7 +72,6 @@ class NetworkDoctorApp:
         self.output.delete("1.0", tk.END)
         self.status_var.set("正在准备诊断……")
         self.progress["value"] = 0
-        self.progress.start(10)
 
         def progress(text: str, percent: int) -> None:
             self._messages.put(("progress", text, percent))
@@ -123,6 +122,7 @@ class NetworkDoctorApp:
                 self.output.delete("1.0", tk.END)
                 self.output.insert(tk.END, self._report_text)
                 self.status_var.set("诊断完成")
+                self.progress["value"] = 100
                 self.progress.stop()
                 self.start_button.configure(state="normal")
                 self.copy_button.configure(state="normal")
