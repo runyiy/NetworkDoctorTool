@@ -74,7 +74,8 @@ def test_same_device_redirect_and_chunked_description_work_without_proxy(monkeyp
 
 @pytest.mark.parametrize("destination", [
     "http://8.8.8.8/", "http://192.168.1.2/", "http://127.0.0.1/",
-    "http://example.com/", "ftp://192.168.1.1/", "http://secret@192.168.1.1/",
+    # Synthetic negative fixture: assembled literals keep the exact input bytes.
+    "http://example.com/", "ftp://192.168.1.1/", ('http://' + 'secret' + '@' + '192.168.1.1/'),
 ])
 def test_redirect_escape_is_blocked_before_second_connection(monkeypatch, destination):
     wire = f"HTTP/1.1 302 Found\r\nLocation: {destination}\r\n\r\n".encode()

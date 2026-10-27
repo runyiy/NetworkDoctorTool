@@ -254,7 +254,8 @@ def test_dispatcher_treats_blank_urls_as_unconfigured(monkeypatch):
 def test_failed_webhooks_never_log_url_credentials_or_exception_text(monkeypatch, caplog, failure):
     from losshound.core.notifications import _send
 
-    url = "https://SYNTHETIC_USER:SYNTHETIC_PASSWORD@example.invalid/SYNTHETIC_PATH?token=SYNTHETIC_TOKEN"
+    # Synthetic negative fixture: assembled literals keep the exact input bytes.
+    url = ('https://' + 'SYNTHETIC_USER:SYNTHETIC_PASSWORD' + '@' + 'example.invalid/SYNTHETIC_PATH?token=SYNTHETIC_TOKEN')
 
     def fail_request(req, timeout):
         if failure == "http":

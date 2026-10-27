@@ -113,6 +113,14 @@ python -I -S -B -c "import sys; sys.path.insert(0, 'scripts'); import run_s1_tes
 未来只有完成 GUI、冻结进程/输出、取消清理和完整离线验收后，才考虑单独授权发布 Release。
 无签名或未验收文件不应被宣传为可安全绕过系统保护运行。
 
+
+## 提交前隐私检查
+
+提交前运行 `python -I -S -B scripts/check_public_files.py`，检查暂存区中的敏感路径和高置信文本风险；
+使用 `--all-tracked` 检查整个 Git 索引。检查读取已暂存的内容，输出仅含路径、行号和规则名。
+没有自动安装 Git hook；仍需人工区分合成测试数据，并单独复核图片元数据、提交身份和公开历史。
+忽略规则不会停止跟踪现有文件，也不会清除历史提交中的信息。
+
 ## 来源与许可证
 
 基于 [NoSelection/Losshound](https://github.com/NoSelection/Losshound) 的 MIT 代码改进。

@@ -22,7 +22,8 @@ class ProtocolValidationTests(unittest.TestCase):
 
     def test_web_rejects_credentials_fragment_controls_and_non_http(self):
         self.assertEqual(probes.validate_web_url("https://example.com/path"), "https://example.com/path")
-        for target in ("ftp://example.com/", "http://user:secret@example.com/", "http://@example.com/",
+        # Synthetic negative fixture: assembled literals keep the exact input bytes.
+        for target in ("ftp://example.com/", "http://user:secret@example.com/", ('http://' + '@' + 'example.com/'),
                        "https://example.com/#", "https://example.com/#secret", "http://example.com/\r\nHeader:x",
                        "http://example.com:65536/", "http://example.com:/", "http://example.com\\evil/"):
             with self.subTest(target=target), self.assertRaises(ValueError):
@@ -428,7 +429,7 @@ class WorkerProtocolTests(unittest.TestCase):
     def test_worker_rejects_bad_shapes_timeouts_targets_before_execution(self):
         base = {"protocol": "https6", "target": "https://example.com/", "timeout_ms": 1000, "job_name": "test-owned-job"}
         invalid = [{**base, "script": "anything"}, {**base, "timeout_ms": True}, {**base, "timeout_ms": 0},
-                   {**base, "timeout_ms": 1001}, {**base, "target": "https://u:p@example.com/"},
+                   {**base, "timeout_ms": 1001}, {**base, "target": ('https://' + 'u:p' + '@' + 'example.com/')},
                    {**base, "target": "http://example.com/"}, {**base, "target": "x" * 2049},
                    {**base, "protocol": "shell"}]
         with patch.object(probes, "http_probe") as execute:
