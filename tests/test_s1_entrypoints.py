@@ -166,6 +166,47 @@ class EntryPointBoundaryTests(unittest.TestCase):
 
 
 class BoundedCliTests(unittest.TestCase):
+    def test_all_cli_reports_redact_private_context_and_preserve_raw_api_result(self):
+        from losshound.cli import runner
+        from losshound.core.session import NetworkEpoch, ProbeEvidence, ProbeOutcome, SessionReport
+
+        config = SimpleNamespace(public_ping_targets=[], dns_test_hostnames=[])
+        for extended in (False, True):
+            with self.subTest(extended=extended):
+                report = SessionReport("cancelled", 60)
+                report.epochs = [NetworkEpoch(1, "synthetic-network-identity", 0.0, {
+                    "wifi": {"ssid": "synthetic-private-ssid"},
+                    "adapters": [{"Name": "synthetic-private-adapter"}],
+                    "gateway": "192.0.2.17",
+                })]
+                report.evidence = [ProbeEvidence(
+                    1, "2026-10-27T00:00:00+00:00", 0.0, 0.1, 1,
+                    "icmp", "IPv4", "192.0.2.17", ProbeOutcome.EXECUTION_ERROR,
+                    error="synthetic-private-error",
+                    data={"stdout": "synthetic-private-raw-output"},
+                )]
+                report.incomplete = ["synthetic-private-incomplete"]
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with mock.patch.object(runner, "SessionController") as controller, \
+                     mock.patch.object(runner.signal, "signal"), \
+                     contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    controller.return_value.run.return_value = report
+                    returned = runner.run_cli(config, extended_diagnostics=extended)
+                public = json.loads(stdout.getvalue())
+                self.assertTrue(public.get("redaction", {}).get("applied"))
+                for private in ("synthetic-network-identity", "synthetic-private-ssid",
+                                "synthetic-private-adapter", "192.0.2.17",
+                                "synthetic-private-error", "synthetic-private-raw-output",
+                                "synthetic-private-incomplete"):
+                    self.assertNotIn(private, stdout.getvalue() + stderr.getvalue())
+                self.assertEqual(public["status"], "cancelled")
+                self.assertEqual(public["evidence"][0]["outcome"], "execution_error")
+                self.assertEqual(public["epochs"][0]["context"]["gateway"],
+                                 public["evidence"][0]["target"])
+                self.assertIs(returned, report)
+                self.assertEqual(returned.epochs[0].context["wifi"]["ssid"],
+                                 "synthetic-private-ssid")
+
     def test_ctrl_c_requests_cancellation_then_prints_final_evidence(self):
         from losshound.cli import runner
 
@@ -196,7 +237,7 @@ class BoundedCliTests(unittest.TestCase):
                 on_progress(SimpleNamespace(phase="cleanup", remaining_seconds=58, completed_count=0))
                 return SimpleNamespace(
                     status="cancelled",
-                    to_json=lambda: json.dumps({"status": "cancelled", "evidence": [], "incomplete": ["icmp"]}),
+                    to_dict=lambda: {"status": "cancelled", "evidence": [], "incomplete": ["icmp"]},
                 )
 
         self_test = self

@@ -88,12 +88,11 @@ def run_cli(config: AppConfig, *, duration_seconds: int = 60,
         if report.output_errors and report.status != "cleanup_failed":
             report.status = "output_error"
         report.duration_seconds = max(0.0, time.monotonic() - started)
-        if extended_diagnostics:
-            from losshound.core.session_report import redact_report
-            prepared_json = json.dumps(redact_report(report.to_dict()), ensure_ascii=False,
-                                       indent=2, allow_nan=False)
-        else:
-            prepared_json = report.to_json()
+        # Every public CLI report uses the same report-local redaction. Keep
+        # the original report available only to the calling core/test API.
+        from losshound.core.session_report import redact_report
+        prepared_json = json.dumps(redact_report(report.to_dict()), ensure_ascii=False,
+                                   indent=2, allow_nan=False)
         delivered = output.finish(prepared_json)
         report.output_errors = list(output.errors)
         if not delivered and not report.output_errors:

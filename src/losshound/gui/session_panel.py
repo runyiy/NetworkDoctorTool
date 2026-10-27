@@ -281,7 +281,21 @@ class SessionPanel(QWidget):
         worker.failed.connect(self._on_error, connection)
         worker.finished.connect(self._on_worker_finished, connection)
         self._display_timer.start()
-        worker.start()
+        try:
+            worker.start()
+        except Exception as exc:
+            self._set_error(f"Cannot start worker: {type(exc).__name__}")
+            if worker.isRunning():
+                # Retain a thread that acquired ownership before start failed;
+                # only its actual finished signal can release it safely.
+                worker.cancel()
+            else:
+                self._worker = self._worker_kind = None
+                self._display_timer.stop()
+                self._remaining.setText("Worker did not start.")
+                worker.deleteLater()
+                self.cleanup_finished.emit()
+            self._update_controls()
 
     def start_session(self):
         if self._closing or self.is_running:
@@ -408,6 +422,10 @@ class SessionPanel(QWidget):
                 + "\n\nAcknowledge the impact and inability to restore exactly, and run the simulation?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)
+            # The modal dialog runs a nested event loop: shutdown may have
+            # started while it was visible. A late answer cannot start work.
+            if self._closing:
+                return
             accepted = answer == QMessageBox.StandardButton.Yes
             controller.confirm(offer["request_id"], accepted=accepted,
                                acknowledge_impact=accepted, acknowledge_no_restore=accepted)
