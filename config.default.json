@@ -1,0 +1,26 @@
+{
+    "ping_interval_seconds": 30,
+    "dns_interval_seconds": 60,
+    "route_interval_seconds": 300,
+    "history_retention_hours": 24,
+    "public_ping_targets": ["1.1.1.1", "8.8.8.8"],
+    "dns_test_hostnames": ["google.com", "chatgpt.com"],
+    "tracert_target": "8.8.8.8",
+    "tracert_max_hops": 20,
+    "ping_count": 4,
+    "ping_timeout_ms": 2000,
+    "auto_benchmark_interval_minutes": 0,
+    "lan_discovery_firewall_enabled": false,
+    "lan_http_scan_enabled": false,
+    "diagnosis": {
+        "gateway_loss_threshold": 20.0,
+        "public_loss_threshold": 20.0,
+        "dns_failure_threshold": 0.5,
+        "latency_warning_ms": 150,
+        "jitter_warning_ms": 50,
+        "route_change_sensitivity": 3,
+        "timeout_burst_threshold": 3,
+        "min_observations": 3,
+        "window_minutes": 10
+    }
+}
