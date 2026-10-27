@@ -1,7 +1,65 @@
-.worktrees/
-.venv/
+# Python
 __pycache__/
-.pytest_cache/
-build/
+*.py[cod]
+*$py.class
+*.egg-info/
 dist/
-*.spec
+build/
+*.egg
+*.whl
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Application data
+*.db
+*.log
+config.json
+optimizer_backup.json
+benchmark_history.json
+load_benchmark_history.json
+
+# Environment
+.env
+.env.*
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+about.txt
+
+# Local design references
+.design-reference/
+
+# Internal planning docs — not for public release
+docs/superpowers/
+
+# Dev-only iteration artifacts (texture sources, screenshot probes, HUD tooling)
+assets/_*
+assets/header-halo-test.png
+scripts/_*
+
+# Screenshot tool default output (committed copy lives in assets/)
+/dashboard_preview.png
+
+# Local diagnostic evidence and migration/private metadata
+docs/*-evidence/
+docs/S1_WINDOWS_EVIDENCE.json
+*:Zone.Identifier
+*Zone.Identifier
+.migration-local/

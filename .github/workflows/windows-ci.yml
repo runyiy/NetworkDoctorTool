@@ -1,0 +1,153 @@
+name: Windows CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-compatibility:
+    # Source/stdlib contracts only; this is not Linux product support or
+    # Windows native/GUI acceptance. Keep the reviewed Windows package job.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11.18', '3.12.16']
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up compatibility interpreter
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: 'x64'
+
+      - name: Check metadata, minimum-version syntax and inert output contracts
+        run: |
+          python -I -S -B -c "import sys; sys.path.insert(0, 'scripts'); import run_s1_tests as runner; runner.DETERMINISTIC = ('test_version.PythonCompatibilityTests', 'test_session_output_s1.OutputContractTests', 'test_s1_entrypoints.BoundedCliTests.test_windows_311_public_cli_os_sink_returns_error_without_collection'); raise SystemExit(runner.main())" --mode deterministic --log build/python-compatibility.log --json build/python-compatibility.json
+
+  test-and-package:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: '1'
+      PYTHONPATH: src
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13.15'
+          architecture: 'x64'
+
+      - name: Test dependency gate without third-party imports
+        run: python -I -S -B scripts/test_ci_dependencies.py
+
+      # Qt XML is excluded under the scoped assessment in docs/CI_SECURITY.md.
+      - name: Check advisories and PyPI metadata before installing
+        run: python -I -S -B scripts/check_ci_dependencies.py requirements-ci.txt --lock build/requirements-ci.lock --losshound-qt-xml-exclusion
+
+      - name: Install reviewed wheels only
+        run: |
+          python -m pip --isolated install --index-url https://pypi.org/simple --only-binary=:all: --require-hashes --no-deps -r build/requirements-ci.lock
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip check
+
+      - name: Run tests
+        run: python -m pytest --junitxml=build/test-results.xml
+
+      - name: Build executable
+        run: python -m PyInstaller --noconfirm --clean Losshound.spec
+
+      - name: Verify Qt XML is absent before launching the executable
+        run: |
+          @'
+          from PyInstaller.archive.readers import CArchiveReader
+          archive = CArchiveReader("dist/Losshound.exe")
+          forbidden = [
+              name for name in archive.toc
+              if "qtxml" in name.lower() or "qt6xml" in name.lower()
+          ]
+          if forbidden:
+              raise SystemExit(f"Qt XML must not be shipped: {forbidden}")
+          print(f"Qt XML absent from {len(archive.toc)} packaged entries.")
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Smoke-check packaged Qt startup
+        run: |
+          $exe = (Resolve-Path -LiteralPath 'dist/Losshound.exe').Path
+          $start = [System.Diagnostics.ProcessStartInfo]::new()
+          $start.FileName = $exe
+          $start.Arguments = '--gui-smoke-test'
+          $start.UseShellExecute = $false
+          $start.CreateNoWindow = $true
+          $process = [System.Diagnostics.Process]::Start($start)
+          try {
+            if (-not $process.WaitForExit(60000)) {
+              $process.Kill($true)
+              throw 'Packaged Qt startup did not exit within 60 seconds.'
+            }
+            if ($process.ExitCode -ne 0) {
+              throw "Packaged Qt startup failed with exit code $($process.ExitCode)."
+            }
+          } finally {
+            $process.Dispose()
+          }
+
+      - name: Smoke-check packaged help and write checksum
+        run: |
+          $exe = (Resolve-Path -LiteralPath 'dist/Losshound.exe').Path
+          $start = [System.Diagnostics.ProcessStartInfo]::new()
+          $start.FileName = $exe
+          $start.Arguments = '--help'
+          $start.UseShellExecute = $false
+          $start.CreateNoWindow = $true
+          $process = [System.Diagnostics.Process]::Start($start)
+          try {
+            if (-not $process.WaitForExit(60000)) {
+              $process.Kill($true)
+              throw 'Packaged --help did not exit within 60 seconds.'
+            }
+            if ($process.ExitCode -ne 0) {
+              throw "Packaged --help failed with exit code $($process.ExitCode)."
+            }
+          } finally {
+            $process.Dispose()
+          }
+          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  Losshound.exe" | Set-Content -LiteralPath 'dist/Losshound.exe.sha256' -Encoding ascii
+
+      - name: Upload tested build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Losshound-windows-x64-${{ github.sha }}
+          path: |
+            dist/Losshound.exe
+            dist/Losshound.exe.sha256
+            build/requirements-ci.lock
+            build/test-results.xml
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

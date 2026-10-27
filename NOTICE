@@ -1,0 +1,10 @@
+NetworkDoctorTool
+
+Derived from NoSelection/Losshound:
+https://github.com/NoSelection/Losshound
+
+Copyright (c) 2026 NoSelection
+Licensed under the MIT License. The complete original license is in LICENSE.
+
+The repository name is NetworkDoctorTool; internal Python/application/build names
+remain Losshound. This attribution does not claim endorsement by the upstream author.

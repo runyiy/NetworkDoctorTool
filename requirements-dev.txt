@@ -1,2 +1,5 @@
-pytest>=8,<10
-pyinstaller>=6,<7
+-r requirements.txt
+pytest>=7.0
+pytest-cov>=4.0
+pyinstaller>=6.0
+pdfminer.six>=20231228
