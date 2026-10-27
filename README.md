@@ -7,7 +7,6 @@ MIT 原版权与许可全文见 [LICENSE](LICENSE)，来源说明见 [NOTICE](NO
 
 GitHub 项目名称是 **NetworkDoctorTool**；为保持现有结构，Python 包、命令入口、
 GUI 内部应用名和构建文件仍使用 `losshound` / `Losshound.spec`，未做大规模模块重命名。
-迁移 PR 合并前，默认 main 仍是旧实现；审阅新版时请使用迁移分支。
 
 ## 当前状态
 
@@ -18,7 +17,7 @@ GUI 内部应用名和构建文件仍使用 `losshound` / `Losshound.spec`，未
 | 诊断核心、CLI、解释与本地报告 | 已有定向模拟及获准 Windows 只读验证；部分 S2 非 GUI 交付已接受，不代表完整 S2 PASS |
 | GUI 集成代码 | 已接受基于 Fake Qt 的参数、结果、取消/关闭等集成检查；真实 PySide6 GUI 尚未验收 |
 | 修复核心与 Windows 适配层 | 仅模拟执行器/命令测试已验证；普通诊断不自动修复，当前 GUI 不可调用真实清缓存 |
-| 当前兼容检查 | Windows Python 3.12 的标准库/模拟检查通过；真实 Windows 3.11、精确 Linux CI 矩阵仍有待验项目 |
+| 当前兼容检查 | Windows Python 3.12 的标准库/模拟检查通过；[Linux CI](https://github.com/runyiy/NetworkDoctorTool/actions/runs/40430331423) 的 Python 3.11.18、3.12.16 轻量兼容性检查已 PASS；不代表 Windows 3.11 实机、真实 GUI 或 EXE 验收 |
 | 依赖安全门禁 | Pillow 12.3.0、setuptools 83.0.0 已有安全阻塞；未安装或升级它们、未放宽门禁 |
 | GUI、完整离线 EXE 与真实 DNS 修复 | 未通过验收；当前没有本项目新版 EXE Release 可供承诺使用 |
 
@@ -32,7 +31,7 @@ S1 保持 **PENDING ACCEPTANCE**；完整 S1、S2、S3 和 EXE 均不能宣称 P
 - **有界诊断 `--cli` 的控制台、文件及管道输出要求 Windows Python 3.12+**。
   Windows 3.11 会明确记录 `output_error`、退出码 1 并停止采集，不静默切换到其他输出。
   核心 API 的 `StringIO` 内存报告不是 CLI 重定向后备。`--help` 不启动诊断。
-- 新 Linux 3.11/3.12 CI 行只检查源码语法、元数据和纯模拟契约，不代表新增 Linux 产品支持或 Windows 实机验收。
+- Linux CI（Ubuntu 24.04）的 Python 3.11.18、3.12.16 轻量检查已 PASS；范围仅为源码语法、元数据和纯模拟契约，不代表新增 Linux 产品支持或 Windows 实机验收。
 
 ## 诊断能力
 
@@ -104,7 +103,7 @@ Ctrl+C 请求取消与清理。不要将任意退出码 0 当作所有网络健�
 python -I -S -B -c "import sys; sys.path.insert(0, 'scripts'); import run_s1_tests as runner; runner.DETERMINISTIC = ('test_version.PythonCompatibilityTests', 'test_session_output_s1.OutputContractTests', 'test_s1_entrypoints.BoundedCliTests.test_windows_311_public_cli_os_sink_returns_error_without_collection'); raise SystemExit(runner.main())" --mode deterministic --log build/compatibility.log --json build/compatibility.json
 ```
 
-这些检查只证明标准库/语法/模拟边界，不证明真实 3.11、GUI 或 EXE 通过。
+这些检查只证明标准库/语法/模拟边界，不代表 Windows 3.11 实机、真实 GUI 或 EXE 验收通过。
 [Windows CI](.github/workflows/windows-ci.yml) 保留先安全门禁、再安装/测试/构建的顺序，
 并在 EXE 启动前检查 Qt XML 未打包。现有依赖安全阻塞会使 Windows job 失败；
 不跳过或放宽检查来制造绿色结果。CI 的历史上游记录不等于本仓库新版交付验收。
