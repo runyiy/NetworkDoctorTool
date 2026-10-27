@@ -62,7 +62,7 @@ Before installing or upgrading any third-party package, binary, or tool:
 - If provenance or relevant security findings remain unresolved, stop the affected installation or launch and explain why. Any vulnerability exception must be explicit, documented, and tested.
 - Report what was actually checked. A clean CVE scan or matching hash does not prove that a package is malware-free.
 
-- 继续使用现有依赖安全门禁及 [CI_SECURITY.md](docs/CI_SECURITY.md) 中已明确记录的限定条件；门禁失败、服务不可用、来源或相关安全结论未解决时，停止受影响的安装或启动。不得删除检查、降低门槛、换工具绕过失败或自行增加漏洞豁免。既有安装/启动授权与平台限制仍须分别满足。
+- 继续使用现有依赖安全门禁及 [SECURITY.md](SECURITY.md) 中已明确记录的限定条件；门禁失败、服务不可用、来源或相关安全结论未解决时，停止受影响的安装或启动。不得删除检查、降低门槛、换工具绕过失败或自行增加漏洞豁免。既有安装/启动授权与平台限制仍须分别满足。
 
 ### 诊断、修复与验证隔离
 

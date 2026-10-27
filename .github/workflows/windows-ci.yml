@@ -64,7 +64,7 @@ jobs:
       - name: Test dependency gate without third-party imports
         run: python -I -S -B scripts/test_ci_dependencies.py
 
-      # Qt XML is excluded under the scoped assessment in docs/CI_SECURITY.md.
+      # Qt XML is excluded under the scoped assessment in SECURITY.md.
       - name: Check advisories and PyPI metadata before installing
         run: python -I -S -B scripts/check_ci_dependencies.py requirements-ci.txt --lock build/requirements-ci.lock --losshound-qt-xml-exclusion
 

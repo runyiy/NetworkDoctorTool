@@ -5,10 +5,8 @@ Single source of truth for colour, typography, and texture so QSS in
 """
 from __future__ import annotations
 
-import sys
 from functools import lru_cache
 from math import exp, sin
-from pathlib import Path
 
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import (
@@ -24,16 +22,6 @@ from PySide6.QtGui import (
 )
 
 
-def _assets_dir() -> Path:
-    """Locate the project ``assets/`` directory.
-
-    Works in a source checkout and in a PyInstaller bundle, where data files
-    are unpacked under ``sys._MEIPASS``.
-    """
-    base = getattr(sys, "_MEIPASS", None)
-    if base is not None:
-        return Path(base) / "assets"
-    return Path(__file__).resolve().parents[3] / "assets"
 
 
 # ---------------------------------------------------------------------------
@@ -150,34 +138,6 @@ def label_font() -> QFont:
 # Textures
 # ---------------------------------------------------------------------------
 
-@lru_cache(maxsize=1)
-def dotted_texture() -> QPixmap:
-    """Tileable dotted texture used inside panels.
-
-    Loads the noise-enriched PNG from ``assets/panel-texture.png``. Falls
-    back to a procedural grid if the asset is missing so dev environments
-    without ``scripts/_extract_textures.py`` having been run still work.
-    """
-    path = _assets_dir() / "panel-texture.png"
-    if path.exists():
-        pix = QPixmap(str(path))
-        if not pix.isNull():
-            return pix
-
-    # Fallback — procedural uniform grid.
-    cell, dot_size, alpha = 6, 1, 150
-    size = cell * 16
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(230, 236, 246, alpha))
-    for y in range(0, size, cell):
-        for x in range(0, size, cell):
-            painter.drawRect(x, y, dot_size, dot_size)
-    painter.end()
-    return pixmap
 
 
 @lru_cache(maxsize=16)
@@ -254,41 +214,6 @@ def flowing_dot_field(width: int, height: int) -> QPixmap:
     return pixmap
 
 
-@lru_cache(maxsize=8)
-def halo_pixmap(width: int = 360, height: int = 90) -> QPixmap:
-    """Perforated radial halo painted behind the brand banner.
-
-    Loads the extracted PNG from ``assets/header-halo.png`` and scales it
-    to the requested footprint. Falls back to a procedural radial gradient
-    if the asset is missing.
-    """
-    path = _assets_dir() / "header-halo.png"
-    if path.exists():
-        pix = QPixmap(str(path))
-        if not pix.isNull():
-            return pix.scaled(
-                width,
-                height,
-                Qt.AspectRatioMode.IgnoreAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-
-    # Fallback — procedural radial halo.
-    pixmap = QPixmap(width, height)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.setPen(Qt.PenStyle.NoPen)
-    cx = width / 2
-    cy = -height * 0.1
-    gradient = QRadialGradient(QPointF(cx, cy), width * 0.55)
-    gradient.setColorAt(0.0, QColor(220, 230, 240, 160))
-    gradient.setColorAt(0.4, QColor(220, 230, 240, 60))
-    gradient.setColorAt(1.0, QColor(220, 230, 240, 0))
-    painter.setBrush(QBrush(gradient))
-    painter.drawRect(0, 0, width, height)
-    painter.end()
-    return pixmap
 
 
 @lru_cache(maxsize=4)
@@ -451,9 +376,7 @@ __all__ = [
     "chrome_font",
     "mono_font",
     "label_font",
-    "dotted_texture",
     "flowing_dot_field",
-    "halo_pixmap",
     "panel_glow",
     "panel_spotlight",
     "panel_inner_pen",

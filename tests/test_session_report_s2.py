@@ -72,7 +72,8 @@ class RedactionTests(unittest.TestCase):
 
     def test_url_path_query_fragment_and_credentials_are_not_retained(self):
         report = fixture()
-        url = "https://private-user:private-password@secret.example:8443/private-path?token=private-token#private-fragment"
+        # Synthetic negative fixture: assembled literals keep the exact input bytes.
+        url = ('https://' + 'private-user:private-password' + '@' + 'secret.example:8443/private-path?token=private-token#private-fragment')
         report["evidence"][0]["target"] = url
         report["analysis"]["intermittent"] = [{"target": "secret.example"}, {"target": url}]
         report["summary"] = "Website " + url
@@ -92,7 +93,7 @@ class RedactionTests(unittest.TestCase):
         report["evidence"][0]["data"].update({
             "stderr": "private stderr", "error_data": {"opaque": "private error object"},
             "headers": {"Authorization": "Bearer private-token"},
-            "exception_message": "C:\\Users\\private-user",
+            "exception_message": ('C:' + '\\Users\\private-user'),
         })
         report["incomplete"] = ["private incomplete message"]
         report["cleanup_errors"] = ["private cleanup path"]

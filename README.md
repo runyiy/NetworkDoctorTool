@@ -17,12 +17,14 @@ GUI 内部应用名和构建文件仍使用 `losshound` / `Losshound.spec`，未
 | 诊断核心、CLI、解释与本地报告 | 已有定向模拟及获准 Windows 只读验证；部分 S2 非 GUI 交付已接受，不代表完整 S2 PASS |
 | GUI 集成代码 | 已接受基于 Fake Qt 的参数、结果、取消/关闭等集成检查；真实 PySide6 GUI 尚未验收 |
 | 修复核心与 Windows 适配层 | 仅模拟执行器/命令测试已验证；普通诊断不自动修复，当前 GUI 不可调用真实清缓存 |
-| 当前兼容检查 | Windows Python 3.12 的标准库/模拟检查通过；[Linux CI](https://github.com/runyiy/NetworkDoctorTool/actions/runs/40430331423) 的 Python 3.11.18、3.12.16 轻量兼容性检查已 PASS；不代表 Windows 3.11 实机、真实 GUI 或 EXE 验收 |
+| 当前兼容检查 | Windows Python 3.12 的8项标准库/模拟契约通过；[Linux CI](https://github.com/runyiy/NetworkDoctorTool/actions/runs/40430331423) 的 Python 3.11.18、3.12.16 轻量兼容性检查已 PASS；不代表 Windows 3.11 实机、真实 GUI 或 EXE 验收 |
 | 依赖安全门禁 | Pillow 12.3.0、setuptools 83.0.0 已有安全阻塞；未安装或升级它们、未放宽门禁 |
 | GUI、完整离线 EXE 与真实 DNS 修复 | 未通过验收；当前没有本项目新版 EXE Release 可供承诺使用 |
 
 S1 保持 **PENDING ACCEPTANCE**；完整 S1、S2、S3 和 EXE 均不能宣称 PASS。
-公开状态见 [docs/STATUS.md](docs/STATUS.md)。本地原始诊断报告、机器信息和测试日志不进入本仓库。
+未宣称本快照的完整旧 pytest/原生套件已通过。Windows 打包任务在依赖门禁失败后，安装、测试、打包及 GUI/EXE smoke 均未执行。
+Pillow 13.0.0、setuptools 84.1.0 仅为未采用的候选；观察期日期不构成安装授权，后续仍需兼容性及新增公告核对、单独批准和通过门禁。
+本地原始诊断报告、机器信息和测试日志不进入本仓库。
 
 ## 平台与 Python 支持
 
@@ -70,7 +72,7 @@ S1 保持 **PENDING ACCEPTANCE**；完整 S1、S2、S3 和 EXE 均不能宣称 P
 ## 源码使用
 
 **当前依赖门禁未通过，不要按此节提前安装依赖、启动真实 GUI/EXE 或执行真实修复。**
-正式环境需先完成 [依赖安全要求](docs/CI_SECURITY.md)，保留 14 天观察期、官方来源、
+正式环境需先完成 [依赖安全要求](SECURITY.md)，保留 14 天观察期、官方来源、
 精确版本和哈希检查；门禁通过且获得对应授权后，才准备隔离 `.venv`。
 `requirements.txt` / `requirements-dev.txt` 的宽松范围不是已审核锁文件，
 不要直接用 `pip install .`、`pip install -e .` 或未审核源码构建绕过该流程。
@@ -112,6 +114,14 @@ python -I -S -B -c "import sys; sys.path.insert(0, 'scripts'); import run_s1_tes
 构建需要另行批准、已审核环境和通过的门禁；当前未构建、启动或发布新版 EXE。
 未来只有完成 GUI、冻结进程/输出、取消清理和完整离线验收后，才考虑单独授权发布 Release。
 无签名或未验收文件不应被宣传为可安全绕过系统保护运行。
+
+
+## 提交前隐私检查
+
+提交前运行 `python -I -S -B scripts/check_public_files.py`，检查暂存区中的敏感路径和高置信文本风险；
+使用 `--all-tracked` 检查整个 Git 索引。检查读取已暂存的内容，输出仅含路径、行号和规则名。
+没有自动安装 Git hook；仍需人工区分合成测试数据，并单独复核图片元数据、提交身份和公开历史。
+忽略规则不会停止跟踪现有文件，也不会清除历史提交中的信息。
 
 ## 来源与许可证
 
