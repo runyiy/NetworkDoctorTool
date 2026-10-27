@@ -117,6 +117,7 @@ class _Thread(_Widget):
     finished = _Signal()
 
     def start(self): self.active = True
+    def isRunning(self): return self.active
     def wait(self, timeout):
         self.wait_timeout = timeout
         return not self.active

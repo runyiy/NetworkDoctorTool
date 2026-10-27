@@ -1,5 +1,6 @@
 import json
 import tempfile
+import unittest
 from pathlib import Path
 
 from losshound.core.config import AppConfig, DiagnosisConfig, load_config, save_config
@@ -107,3 +108,75 @@ def test_save_config_is_atomic_and_cleans_temp_file(tmp_path):
 
     assert load_config(str(path)).ping_interval_seconds == 15
     assert not path.with_name("config.json.tmp").exists()
+
+
+class PackagedConfigTests(unittest.TestCase):
+    def test_frozen_default_comes_from_bundle_before_working_directory(self):
+        from unittest import mock
+        import sys
+        from losshound.core import config as module
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bundle = root / 'bundle'
+            cwd = root / 'cwd'
+            bundle.mkdir()
+            cwd.mkdir()
+            (bundle / 'config.default.json').write_text(
+                json.dumps({'public_ping_targets': ['192.0.2.10']}), encoding='utf-8')
+            (cwd / 'config.default.json').write_text(
+                json.dumps({'public_ping_targets': ['192.0.2.20']}), encoding='utf-8')
+            with mock.patch.object(sys, '_MEIPASS', str(bundle), create=True), \
+                 mock.patch.object(sys, 'frozen', True, create=True), \
+                 mock.patch.object(module, '__file__', str(bundle / 'losshound' / 'core' / 'config.py')), \
+                 mock.patch.object(module.Path, 'cwd', return_value=cwd), \
+                 mock.patch.object(module, '_app_data_dir', return_value=root / 'user'):
+                self.assertEqual(module._find_default_config(), bundle / 'config.default.json')
+                self.assertEqual(module.load_config().public_ping_targets, ['192.0.2.10'])
+
+    def test_source_default_path_and_explicit_user_override_are_preserved(self):
+        from unittest import mock
+        import sys
+        from losshound.core import config as module
+
+        source_default = Path(module.__file__).resolve().parents[3] / 'config.default.json'
+        with mock.patch.object(sys, '_MEIPASS', None, create=True):
+            self.assertEqual(module._find_default_config(), source_default)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            explicit = root / 'chosen.json'
+            explicit.write_text(json.dumps({'public_ping_targets': ['192.0.2.30']}), encoding='utf-8')
+            with mock.patch.object(sys, '_MEIPASS', str(root / 'bundle'), create=True), \
+                 mock.patch.object(module, '_find_default_config', side_effect=AssertionError('Explicit config must win')):
+                self.assertEqual(module.load_config(str(explicit)).public_ping_targets, ['192.0.2.30'])
+
+
+class ConfigLogPrivacyTests(unittest.TestCase):
+    def test_config_status_logs_do_not_include_private_source_path(self):
+        from losshound.core import config as module
+
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / 'synthetic-private-config-name.json'
+            for content in ('{}', '[]', '{'):
+                with self.subTest(content=content):
+                    source.write_text(content, encoding='utf-8')
+                    with self.assertLogs(module.logger, level='INFO') as logs:
+                        self.assertEqual(module.load_config(str(source)), AppConfig())
+                    public = '\n'.join(logs.output)
+                    self.assertNotIn(str(source), public)
+                    self.assertNotIn(source.name, public)
+
+    def test_config_read_error_logs_category_without_arbitrary_exception_text(self):
+        from unittest import mock
+        from losshound.core import config as module
+
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / 'synthetic-private-config-name.json'
+            source.write_text('{}', encoding='utf-8')
+            with mock.patch('builtins.open', side_effect=OSError('synthetic-private-error-detail')), \
+                 self.assertLogs(module.logger, level='WARNING') as logs:
+                self.assertEqual(module.load_config(str(source)), AppConfig())
+            public = '\n'.join(logs.output)
+            self.assertIn('OSError', public)
+            self.assertNotIn(str(source), public)
+            self.assertNotIn('synthetic-private-error-detail', public)

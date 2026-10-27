@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
@@ -292,11 +293,10 @@ def _sanitize_config(data: dict) -> AppConfig:
 
 
 def _find_default_config() -> Optional[Path]:
-    """Look for config.default.json relative to the package or CWD."""
-    candidates = [
-        Path(__file__).resolve().parent.parent.parent.parent / DEFAULT_CONFIG_FILENAME,
-        Path.cwd() / DEFAULT_CONFIG_FILENAME,
-    ]
+    """Prefer the bundled/source default before the working-directory fallback."""
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    root = Path(bundle_root) if bundle_root is not None else Path(__file__).resolve().parents[3]
+    candidates = [root / DEFAULT_CONFIG_FILENAME, Path.cwd() / DEFAULT_CONFIG_FILENAME]
     for p in candidates:
         if p.is_file():
             return p
@@ -323,10 +323,10 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
             if isinstance(loaded, dict):
                 data = loaded
             else:
-                logger.warning("Ignoring config from %s: root must be a JSON object", source)
-            logger.info("Loaded config from %s", source)
+                logger.warning("Ignoring config: root must be a JSON object")
+            logger.info("Loaded config")
         except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to load config from %s: %s", source, exc)
+            logger.warning("Failed to load config: %s", type(exc).__name__)
 
     return _sanitize_config(data)
 

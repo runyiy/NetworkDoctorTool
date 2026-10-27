@@ -456,6 +456,70 @@ class SessionPanelIntegrationContracts(unittest.TestCase):
             verification.finished.emit()
             self.assertEqual(report.to_dict(), original)
 
+    def test_failed_worker_start_restores_idle_without_exposing_exception_text(self):
+        with _gui_modules(real_core=True) as (worker_module, panel_module, _window):
+            panel = panel_module.SessionPanel(_config())
+            created = []
+            original_worker = worker_module.SessionWorker
+
+            def create_worker(*args):
+                worker = original_worker(*args)
+                created.append(worker)
+                return worker
+
+            with patch.object(panel_module, "SessionWorker", side_effect=create_worker), \
+                 patch.object(original_worker, "start", side_effect=RuntimeError("private start details")):
+                panel.start_session()
+            self.assertIsNone(panel._worker)
+            self.assertFalse(panel._display_timer.active)
+            self.assertTrue(panel._start_btn.isEnabled())
+            self.assertFalse(panel._cancel_btn.isEnabled())
+            self.assertFalse(panel._save_btn.isEnabled())
+            self.assertTrue(created[0].deleted)
+            self.assertIn("RuntimeError", panel._state.text())
+            self.assertNotIn("private start details", panel._state.text())
+            self.assertEqual(panel._progress.value(), 0)
+
+    def test_start_failure_after_thread_becomes_active_retains_until_finished(self):
+        with _gui_modules(real_core=True) as (worker_module, panel_module, _window):
+            panel = panel_module.SessionPanel(_config())
+
+            def start_then_fail(worker):
+                worker.active = True
+                raise RuntimeError("synthetic startup failure")
+
+            with patch.object(worker_module.SessionWorker, "start", start_then_fail):
+                panel.start_session()
+            worker = panel._worker
+            self.assertIsNotNone(worker)
+            self.assertTrue(worker.cancel_event.is_set())
+            self.assertFalse(hasattr(worker, "deleted"))
+            self.assertFalse(panel._start_btn.isEnabled())
+            worker.active = False
+            worker.finished.emit()
+            self.assertIsNone(panel._worker)
+            self.assertTrue(worker.deleted)
+            self.assertFalse(panel._display_timer.active)
+            self.assertTrue(panel._start_btn.isEnabled())
+
+    def test_shutdown_during_confirmation_cannot_start_simulation(self):
+        with _gui_modules(real_core=True) as (_worker, panel_module, _window):
+            panel, _report, _old_worker = self.load_baseline(panel_module)
+
+            def close_while_confirming(*_args):
+                self.assertTrue(panel.begin_shutdown())
+                return panel_module.QMessageBox.StandardButton.Yes
+
+            with patch.object(panel_module.QMessageBox, "question", side_effect=close_while_confirming), \
+                 patch.object(panel_module, "SimulatedRepairWorker") as create_worker:
+                panel.simulate_repair()
+            create_worker.assert_not_called()
+            self.assertIsNone(panel._worker)
+            self.assertIsNone(panel._repair_controller)
+            self.assertTrue(panel._closing)
+            self.assertFalse(panel._display_timer.active)
+            self.assertFalse(panel._start_btn.isEnabled())
+
     def test_stale_worker_signals_cannot_replace_current_report_or_release_worker(self):
         with _gui_modules(real_core=True) as (_worker, panel_module, _window):
             panel, report, old_worker = self.load_baseline(panel_module)
