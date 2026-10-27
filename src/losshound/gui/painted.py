@@ -45,16 +45,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from losshound.gui.palette import (
-    chrome_font,
-    dotted_texture,
-    flowing_dot_field,
-    halo_pixmap,
-    label_font,
-    mono_font,
-    ocean_halftone,
-    qc,
-)
+from losshound.gui.palette import chrome_font, flowing_dot_field, label_font, mono_font, ocean_halftone, qc
 
 
 # ---------------------------------------------------------------------------

@@ -124,9 +124,9 @@ Stop Conditions — 停止条件：范围冲突、关键风险、证据不足、
 ## 8. NetworkDoctorTool 当前公开边界
 
 - 基于NoSelection/Losshound增量改进，内部模块与构建名称保留；来源和许可见README/NOTICE/LICENSE。
-- 项目最低Python>=3.11，Windows有界诊断OS输出仍需>=3.12；精确平台能力、已验证/待验见docs/STATUS.md。
+- 项目最低Python>=3.11，Windows有界诊断OS输出仍需>=3.12；精确平台能力、已验证/待验见[README 当前状态](README.md#当前状态)。
 - 当前仅部分交付有定向证据，S1保持PENDING ACCEPTANCE，完整S1/S2/S3、真实GUI/EXE和完整离线交付未通过验收。
-- 依赖安全门禁、14天观察、官方wheel及哈希检查和CI_SECURITY.md的既有Qt限定不得绕过或降低。历史上游记录不放行当前环境。
+- 依赖安全门禁、14天观察、官方wheel及哈希检查和SECURITY.md的既有Qt限定不得绕过或降低。历史上游记录不放行当前环境。
 - 诊断仅只读；GUI仅模拟修复，真实DNS缓存清理须另外明确授权，不能自动接入旧Optimizer/QoS/Firewall。
 - 默认60秒/用户主动最多300秒，Epoch、取消和owned进程清理要求继续保留。模拟/Linux检查不能替代Windows实机。
 - 本地原始报告/日志和环境证据保留在用户本地，不发布私人网络数据；公开说明使用脱敏结果，不创建新验收或审批框架。

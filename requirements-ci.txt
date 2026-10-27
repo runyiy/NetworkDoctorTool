@@ -1,6 +1,6 @@
 # Reviewed Windows CI versions. This is separate from the developer environment.
 # Qt XML is excluded from the EXE under the scoped CVE-2026-15037 assessment.
-# See docs/CI_SECURITY.md before changing these pins.
+# See SECURITY.md before changing these pins.
 altgraph==0.17.5
 cffi==2.0.0
 charset-normalizer==3.4.7

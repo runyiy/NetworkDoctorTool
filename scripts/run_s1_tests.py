@@ -1,7 +1,7 @@
 """Reproducible stdlib-only S1 validation; no pytest, Qt app, or live probes.
 
 Run with native Windows Python 3.12+: -I -S -B scripts/run_s1_tests.py
---mode all --log docs/s1-evidence/tests.log --json docs/s1-evidence/tests.json.
+--mode all --log build/s1-evidence/tests.log --json build/s1-evidence/tests.json.
 """
 from __future__ import annotations
 

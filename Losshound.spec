@@ -32,14 +32,12 @@ a = Analysis(
     datas=[
         ('config.default.json', '.'),
         ('assets/losshound-logo.png', 'assets'),
-        ('assets/panel-texture.png', 'assets'),
-        ('assets/header-halo.png', 'assets'),
     ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # Unused QDom implementation: CVE-2026-15037 (see docs/CI_SECURITY.md).
+    # Unused QDom implementation: CVE-2026-15037 (see SECURITY.md).
     excludes=['tkinter', 'PySide6.QtXml'],
     noarchive=False,
     optimize=0,

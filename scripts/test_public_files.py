@@ -21,7 +21,7 @@ class PublicFileTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn("private-file", [i[2] for i in check.scan(path, b"")])
         for path in ("config.default.json", "tests/fixture.json", "assets/losshound.ico",
-                     "Losshound.spec", "docs/STATUS.md"):
+                     "Losshound.spec", "SECURITY.md"):
             with self.subTest(path=path):
                 self.assertEqual(check.scan(path, b"{}"), [])
 

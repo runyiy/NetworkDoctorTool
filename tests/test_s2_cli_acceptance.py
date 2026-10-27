@@ -14,7 +14,7 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-EVIDENCE = ROOT / "docs" / "s2-evidence" / "non-gui-acceptance-20261026"
+EVIDENCE = ROOT / "build" / "s2-evidence" / "non-gui-acceptance-20261026"
 MARKER = "s2-owned-private-marker-735b"
 PRODUCT_FILES = ("src/losshound/app.py", "src/losshound/cli/runner.py",
                  "src/losshound/core/session.py", "src/losshound/core/session_process.py",
