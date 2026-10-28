@@ -61,26 +61,115 @@ def test_wifi_does_not_spawn_a_shell():
     run.assert_called_once_with(["netsh", "wlan", "show", "interfaces"], 15, encoding="oem")
 
 
+_OWNED_WORKERS = {
+    ("core/session_context.py", "WindowsContextObserver", "start"): "--s1-context-worker",
+    ("core/session_process.py", "WindowsProbeProvider", "_run"): "--s1-probe-worker",
+    ("core/session_output.py", "BoundedSessionOutput", "start"): "--s1-output-worker",
+}
+
+
+def _assert_launch_origin(tree, relative_path, node):
+    # Check shell policy before considering either narrowly reviewed origin.
+    assert not any(kw.arg == "shell" and not (
+        isinstance(kw.value, ast.Constant) and kw.value.value is False)
+        for kw in node.keywords)
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    owner, function, current = None, None, parents.get(node)
+    owner_node = function_node = None
+    while current is not None:
+        if function is None and isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function, function_node = current.name, current
+        if owner is None and isinstance(current, ast.ClassDef):
+            owner, owner_node = current.name, current
+        current = parents.get(current)
+    assert node.args, "A reviewed positional command is required"
+    command = node.args[0]
+    if isinstance(command, ast.Call) and isinstance(command.func, ast.Name) and command.func.id == "windows_command":
+        return "system"
+    site = (relative_path, owner, function)
+    if site in _OWNED_WORKERS:
+        assert parents.get(function_node) is owner_node and parents.get(owner_node) is tree
+        assert node.func.attr == "Popen"
+        assert isinstance(command, ast.Call) and not command.args and not command.keywords
+        assert isinstance(command.func, ast.Attribute) and command.func.attr == "_command"
+        assert isinstance(command.func.value, ast.Name) and command.func.value.id == "self"
+        assert any(kw.arg == "shell" and isinstance(kw.value, ast.Constant)
+                   and kw.value.value is False for kw in node.keywords)
+        return site
+    assert site == ("core/session_process.py", None, "_network") and node.func.attr == "run"
+    assert isinstance(command, ast.Name) and command.id == "args"
+    network = next(item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name == "_network")
+    block = network.body[1]
+    assert isinstance(block, ast.Try) and block.body[3].value is node
+    expected = ast.parse("command = _trusted_imports()\nargs = command(['powershell', '-NoProfile', '-NonInteractive', '-Command', _NETWORK_SCRIPT])\nstage = 'network_query'")
+    assert [ast.dump(item) for item in block.body[:3]] == [ast.dump(item) for item in expected.body]
+    helper = next(item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name == "_trusted_imports")
+    trusted = ast.parse("from losshound.core.windows_commands import windows_command\nreturn windows_command")
+    assert [ast.dump(item) for item in helper.body[-2:]] == [ast.dump(item) for item in trusted.body]
+    return "network"
+
+
 def test_all_subprocess_launches_pass_through_trusted_resolution():
-    """Prevent a new direct subprocess call from reintroducing PATH lookup."""
+    """Check system resolution and exact owned-worker sites without file exemptions."""
     source = Path(__file__).parents[1] / "src" / "losshound"
+    seen = []
     for path in source.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                continue
-            if not isinstance(node.func.value, ast.Name) or node.func.value.id != "subprocess":
-                continue
-            if node.func.attr not in ("run", "Popen", "call", "check_call", "check_output"):
-                continue
-            command = node.args[0]
-            assert (
-                isinstance(command, ast.Call)
-                and isinstance(command.func, ast.Name)
-                and command.func.id == "windows_command"
-            ), f"Unsafe command lookup: {path}:{node.lineno}"
-            assert not any(
-                kw.arg == "shell" and not (
-                    isinstance(kw.value, ast.Constant) and kw.value.value is False
-                ) for kw in node.keywords
-            )
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess"
+                    and node.func.attr in ("run", "Popen", "call", "check_call", "check_output")):
+                seen.append(_assert_launch_origin(tree, path.relative_to(source).as_posix(), node))
+    assert all(seen.count(site) == 1 for site in _OWNED_WORKERS)
+    assert seen.count("network") == 1
+
+
+def _assert_worker_command(command, module, dispatch, frozen):
+    assert Path(command[0]).is_absolute()
+    assert Path(command[0]).resolve(strict=True) == Path(module.sys.executable).resolve(strict=True)
+    assert command[1:] == ([dispatch] if frozen else [
+        "-I", "-S", "-B", str(Path(module.__file__).resolve()), "--worker"])
+
+
+@pytest.mark.parametrize("name,owner,dispatch", [
+    ("session_context", "WindowsContextObserver", "--s1-context-worker"),
+    ("session_process", "WindowsProbeProvider", "--s1-probe-worker"),
+    ("session_output", "BoundedSessionOutput", "--s1-output-worker"),
+])
+def test_owned_worker_commands_are_absolute_and_exact(name, owner, dispatch):
+    import importlib
+    module = importlib.import_module("losshound.core." + name)
+    for frozen in (False, True):
+        with patch.object(module.sys, "frozen", frozen, create=True):
+            command = getattr(module, owner)._command()
+        _assert_worker_command(command, module, dispatch, frozen)
+        with pytest.raises(AssertionError):
+            _assert_worker_command([command[0], "--arbitrary-dispatch"], module, dispatch, frozen)
+
+
+@pytest.mark.parametrize("source", [
+    "class Unknown:\n def start(self):\n  subprocess.Popen(self._command(), shell=False)",
+    "class WindowsContextObserver:\n def another(self):\n  subprocess.Popen(self._command(), shell=False)",
+    "class WindowsContextObserver:\n def start(self):\n  def start(self):\n   subprocess.Popen(self._command(), shell=False)",
+    "subprocess.run(windows_command(['ping']), shell=True)",
+])
+def test_unreviewed_command_or_shell_is_rejected(source):
+    tree = ast.parse(source)
+    call = next(node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute) and node.func.attr in {"run", "Popen"})
+    with pytest.raises(AssertionError):
+        _assert_launch_origin(tree, "core/session_context.py", call)
+
+
+def test_network_command_binding_cannot_be_replaced_with_an_untrusted_alias():
+    path = Path(__file__).parents[1] / "src/losshound/core/session_process.py"
+    source = path.read_text(encoding="utf-8")
+    for original, replacement in (("command = _trusted_imports()", "command = unsafe_command"),
+                                  ("args = command([", "args = list([")):
+        assert source.count(original) == 1
+        tree = ast.parse(source.replace(original, replacement))
+        call = next(node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute) and node.func.attr == "run"
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess")
+        with pytest.raises(AssertionError):
+            _assert_launch_origin(tree, "core/session_process.py", call)
