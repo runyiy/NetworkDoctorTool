@@ -129,7 +129,7 @@ def service_response_checks(report):
 @unittest.skipUnless(sys.platform == "win32" and sys.version_info >= (3, 12), "Native Windows Python 3.12+ required")
 class NativeCLI(unittest.TestCase):
     def run_cli(self, label, *, cancel=False, response_status=200):
-        from losshound.core.session_process import _OwnedJob
+        from losshound.core.session_process import MAX_CLEANUP_SECONDS, _OwnedJob
         EVIDENCE.mkdir(parents=True, exist_ok=True)
         runtime = EVIDENCE / (label + "-runtime")
         runtime.mkdir(exist_ok=False)
@@ -138,7 +138,7 @@ class NativeCLI(unittest.TestCase):
         # An explicit valid config avoids the user's original config and DB.
         config = runtime / "controlled-config.json"
         config.write_text(json.dumps({"public_ping_targets": ["127.0.0.1"],
-            "dns_test_hostnames": ["localhost"], "log_level": "WARNING",
+            "dns_test_hostnames": ["127.0.0.1" if response_status == 503 else "localhost"], "log_level": "WARNING",
             "alerts": {"enabled": False}, "lan_discovery_firewall_enabled": False}), encoding="utf-8")
         config_before = hashlib.sha256(config.read_bytes()).hexdigest()
         server = OwnedHTTP(("127.0.0.1", 0), Handler)
@@ -170,7 +170,23 @@ class NativeCLI(unittest.TestCase):
                                        text=True, encoding="utf-8", errors="strict", creationflags=subprocess.CREATE_NO_WINDOW)
             job = _OwnedJob(process)
             stdout, stderr = process.communicate(timeout=64)
+            initial_active_count = job.active_count()
             result.update(exit_code=process.returncode, cli_wall_seconds=time.monotonic()-started)
+            # An exited root may precede the outer Job's final exit accounting.
+            # Observe natural rundown only; do not terminate or close the Job.
+            natural_exit_started = time.monotonic()
+            natural_exit_deadline = min(started + 64, natural_exit_started + MAX_CLEANUP_SECONDS)
+            settled_active_count = initial_active_count
+            while settled_active_count and time.monotonic() < natural_exit_deadline:
+                time.sleep(min(0.005, max(0.0, natural_exit_deadline - time.monotonic())))
+                settled_active_count = job.active_count()
+            result["outer_job_natural_exit_observation"] = {
+                "initial_active_count": initial_active_count,
+                "final_active_count": settled_active_count,
+                "elapsed_seconds": time.monotonic() - natural_exit_started,
+                "deadline_seconds_since_start": natural_exit_deadline - started,
+                "forced_cleanup_during_observation": False,
+            }
             report = json.loads(stdout)
             result["report_summary"] = summarise(report)
             result["checks"] = {
@@ -187,7 +203,7 @@ class NativeCLI(unittest.TestCase):
                 "log_created_in_owned_appdata": (runtime / "appdata" / "Losshound" / "losshound.log").is_file(),
                 "config_unchanged": hashlib.sha256(config.read_bytes()).hexdigest() == config_before,
                 "no_database_created": not list(runtime.rglob("*.db")),
-                "owned_process_tree_empty_before_fixture_cleanup": job.active_count() == 0,
+                "owned_process_tree_empty_before_fixture_cleanup": settled_active_count == 0 and job.active_count() == 0,
                 "source_unchanged": before == hashes(),
             }
             if cancel:

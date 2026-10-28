@@ -164,8 +164,15 @@ class _OwnedJob:
             self.handle = None
 
 
+WORKER_STARTUP_ALLOWANCE_SECONDS = 1.0
+
+
 class WindowsProbeProvider:
     """Single-owner provider; all deadlines use the controller's monotonic clock."""
+
+    probe_budget_seconds = 3.0
+    network_budget_seconds = 6.0
+    cleanup_budget_seconds = MAX_CLEANUP_SECONDS
 
     def __init__(self, clock=time.monotonic, extended_diagnostics=False):
         if not isinstance(extended_diagnostics, bool):
@@ -253,7 +260,22 @@ class WindowsProbeProvider:
             return _result("not_attempted", error="Collection deadline reached")
         if sys.platform != "win32":
             return _result("unsupported", error="Windows probe provider requires Windows")
-        operation_deadline = min(deadline, self.clock() + timeout)
+        entered = self.clock()
+        operation_deadline = min(deadline, entered + timeout + WORKER_STARTUP_ALLOWANCE_SECONDS)
+        timing = {"startup_allowance_seconds": WORKER_STARTUP_ALLOWANCE_SECONDS,
+                  "native_timeout_ms": max(1, int(min(1.0, timeout / 2) * 1000))}
+
+        def mark(name, since):
+            elapsed = self.clock() - since
+            if math.isfinite(elapsed):
+                timing[name] = max(0.0, elapsed)
+
+        def measured(result):
+            result = dict(result)
+            data = dict(result.get("data")) if isinstance(result.get("data"), dict) else {}
+            data["parent_timing"] = timing
+            result["data"] = data
+            return result
         cleanup_end = min(self.cleanup_deadline or deadline,
                           operation_deadline + MAX_CLEANUP_SECONDS)
         proc = job = None
@@ -262,18 +284,22 @@ class WindowsProbeProvider:
         if protocol in {"network", "network2"}:
             details["context_status"] = "UNKNOWN"
         try:
+            creation_started = self.clock()
             proc = subprocess.Popen(self._command(), stdin=subprocess.PIPE,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     text=True, encoding="utf-8", errors="replace",
                                     shell=False, creationflags=subprocess.CREATE_NO_WINDOW)
+            mark("creation_seconds", creation_started)
             self.started_pids.append(proc.pid)
             self._active.append((proc, None))
             # Fail closed if nested jobs are unavailable. No request was sent.
             stage = "worker_job_assignment"
+            assignment_started = self.clock()
             job = _OwnedJob(proc)
+            mark("job_assignment_seconds", assignment_started)
             self._active[-1] = (proc, job)
             payload = json.dumps({"protocol": protocol, "target": target, "job_name": job.name,
-                                  "timeout_ms": max(1, int(min(1.0, timeout / 2) * 1000))})
+                                  "timeout_ms": timing["native_timeout_ms"]})
             first = True
             stage = "worker_response"
             while self.clock() < operation_deadline:
@@ -281,10 +307,13 @@ class WindowsProbeProvider:
                     outcome, error = "cancelled", "Session cancelled during probe"
                     break
                 try:
+                    if first:
+                        mark("request_offered_elapsed_seconds", entered)
                     stdout, stderr = proc.communicate(
                         input=payload if first else None,
                         timeout=min(_POLL_SECONDS, max(0.001, operation_deadline-self.clock())))
                     first = False
+                    mark("response_elapsed_seconds", entered)
                     if proc.returncode != 0:
                         details["exit_code"] = proc.returncode
                         error = f"Probe worker exited {proc.returncode}"
@@ -299,7 +328,7 @@ class WindowsProbeProvider:
                         "unsupported", "skipped", "cancelled", "not_attempted"}:
                         error = "Invalid probe worker response"
                         break
-                    return reply
+                    return measured(reply)
                 except subprocess.TimeoutExpired as exc:
                     stdout, stderr = exc.stdout, exc.stderr
                     first = False
@@ -307,18 +336,21 @@ class WindowsProbeProvider:
                 error = "Probe execution deadline reached; network outcome unknown"
             if cancel_event.is_set():
                 outcome, error = "cancelled", "Session cancelled during probe"
-            return _result(outcome, error=error,
-                           data=_diagnostics(stage, stdout=stdout, stderr=stderr, **details))
+            return measured(_result(outcome, error=error,
+                           data=_diagnostics(stage, stdout=stdout, stderr=stderr, **details)))
         except (OSError, ValueError, TypeError) as exc:
-            return _result("execution_error",
+            return measured(_result("execution_error",
                            error=f"Probe execution failed at {stage}: {type(exc).__name__}: {_bounded_text(exc)}",
-                           data=_diagnostics(stage, exc, stdout=stdout, stderr=stderr, **details))
+                           data=_diagnostics(stage, exc, stdout=stdout, stderr=stderr, **details)))
         finally:
+            cleanup_started = self.clock()
             if proc is not None:
                 cleanup_end = min(cleanup_end, self.clock() + MAX_CLEANUP_SECONDS)
                 self._stop(proc, job, cleanup_end)
                 self._active = [(p, j if j is not None and j.handle else None)
                                 for p, j in self._active if p is not proc or p.poll() is None]
+            mark("cleanup_seconds", cleanup_started)
+            mark("return_elapsed_seconds", entered)
 
     def close(self, deadline):
         for proc, job in list(self._active):
@@ -715,10 +747,13 @@ def _verify_private_job(name):
 def worker_main():
     """Strict one-request worker; accepts no executable/script input."""
     stage = "worker_stream_setup"
+    worker_entered = time.monotonic()
+    request_read = operation_started = None
     try:
         _repair_frozen_streams()
         stage = "worker_request_validation"
         raw = sys.stdin.read(8193)
+        request_read = time.monotonic()
         if len(raw) > 8192:
             raise ValueError("Oversized request")
         request = json.loads(raw)
@@ -744,23 +779,37 @@ def worker_main():
             result = _result("execution_error", error="Probe worker is not owned by a bounded session")
         elif protocol in {"network", "network2"}:
             stage = "network"
+            operation_started = time.monotonic()
             result = _network(include_signals=True) if protocol == "network2" else _network()
         elif protocol == "icmp":
             stage = "icmp"
+            operation_started = time.monotonic()
             result = _icmp(target, timeout_ms)
         elif protocol in {"dns", "dns6"}:
             stage = "getaddrinfo"
+            operation_started = time.monotonic()
             result = _dns(target, socket.AF_INET6 if protocol == "dns6" else socket.AF_INET)
         elif protocol in {"tcp", "tcp6"}:
             stage = "tcp"
+            operation_started = time.monotonic()
             result = tcp_probe(target, socket.AF_INET6 if protocol == "tcp6" else socket.AF_INET, timeout_ms)
         else:
             stage = "http"
+            operation_started = time.monotonic()
             result = http_probe(target, socket.AF_INET6 if protocol.endswith("6") else socket.AF_INET, timeout_ms)
     except Exception as exc:
         result = _result("execution_error",
                          error=f"Worker failed at {stage}: {type(exc).__name__}: {_bounded_text(exc)}",
                          data=_diagnostics(stage, exc))
+    before_reply = time.monotonic()
+    child_timing = {"worker_until_reply_seconds": max(0.0, before_reply - worker_entered)}
+    if request_read is not None:
+        child_timing["request_read_seconds"] = max(0.0, request_read - worker_entered)
+    if operation_started is not None:
+        child_timing["validation_seconds"] = max(0.0, operation_started - request_read)
+        child_timing["operation_seconds"] = max(0.0, before_reply - operation_started)
+    result.setdefault("data", {})["child_timing"] = {
+        name: value for name, value in child_timing.items() if math.isfinite(value)}
     if sys.stdout is None:
         return 2
     sys.stdout.write(json.dumps(result, ensure_ascii=True, allow_nan=False))
