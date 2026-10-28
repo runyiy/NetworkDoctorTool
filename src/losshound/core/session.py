@@ -227,6 +227,11 @@ def _extended_tasks(request, context):
                       for task in tasks if task["role"] == "target"}
     tasks = [task for task in tasks if task["role"] != "public"
              or (task["protocol"], task["target"], task["family"]) not in website_probes]
+    # Keep each website's cross-protocol checks ahead of ICMP and
+    # background references when only part of a later round fits the budget.
+    # Python's stable sort preserves every task and order within each group.
+    tasks.sort(key=lambda task: (0 if task["protocol"] != "icmp" else 1)
+               if task["role"] == "target" else 2)
     return tasks, missing
 
 
@@ -301,6 +306,10 @@ class SessionController:
         cohort_identity = None
         cohort_context = {}
         cohort_disrupted = False
+        identity_query_seconds = 0.0
+        observer_wait_seconds = 0.0
+        latest_network_query = {}
+        next_opening = None
         provider = self._provider
         active_epoch: NetworkEpoch | None = None
         last_identity = None
@@ -327,12 +336,18 @@ class SessionController:
             return "cancelled" if cancel.is_set() else "deadline"
 
         def network() -> tuple[object, dict]:
-            nonlocal active_epoch, last_identity, latest_network_result
+            nonlocal active_epoch, last_identity, latest_network_result, identity_query_seconds, latest_network_query
             if stopped():
                 return None, {}
             progress("network_context")
             before_watch = observer.snapshot()
+            query_started = self._clock()
             result = provider.read_network(collection_deadline, cancel)
+            query_finished = self._clock()
+            query_timestamp = datetime.now(timezone.utc).isoformat()
+            identity_query_seconds = max(0.0, query_finished - query_started)
+            latest_network_query = {"started": query_started, "finished": query_finished,
+                                    "timestamp": query_timestamp, "index": len(report.context_observations)}
             latest_network_result = result
             after_watch = observer.snapshot()
             context = result.get("data") if isinstance(result.get("data"), dict) else {}
@@ -350,10 +365,15 @@ class SessionController:
                 identity = None
             identity_known = isinstance(identity, str) and bool(identity)
             report.context_observations.append({
-                "elapsed_seconds": max(0.0, self._clock() - started),
+                "elapsed_seconds": max(0.0, query_finished - started),
+                "query_started_seconds": max(0.0, query_started - started),
+                "query_finished_seconds": max(0.0, query_finished - started),
+                "timestamp": query_timestamp,
                 "status": "IDENTIFIED" if identity_known else "UNKNOWN",
                 "identity": identity if identity_known else None,
                 "continuity": "OBSERVED" if watch_stable else "UNKNOWN",
+                "query_duration_seconds": identity_query_seconds,
+                "observer_startup_wait_seconds": observer_wait_seconds,
                 "observer": after_watch,
                 "query_outcome": result.get("outcome"), "error": result.get("error"),
                 "error_data": context if not identity_known else {},
@@ -376,6 +396,22 @@ class SessionController:
                 last_identity = key
             # Identity alone cannot establish continuity without event coverage.
             return key if watch_stable else None, context
+
+        def reusable_opening():
+            """Consume only an adjacent, real closing query with continuous coverage."""
+            nonlocal next_opening, active_epoch, last_identity
+            if next_opening is None or stopped():
+                return None
+            watch = observer.snapshot()
+            token = (watch.get("observer_id"), watch.get("generation"))
+            if (watch.get("status") == "READY" and not watch.get("errors")
+                    and watch.get("exit_code") is None and token == next_opening["identity"][1]
+                    and active_epoch is next_opening["epoch"] and last_identity == next_opening["identity"]):
+                return next_opening
+            # A transient gap must not disappear when READY later returns.
+            next_opening = None
+            active_epoch = last_identity = None
+            return None
 
         def cohort_boundary() -> tuple[object, dict]:
             """Observe continuity inside an S2 round; never certify it alone.
@@ -464,10 +500,41 @@ class SessionController:
             observer.start(collection_deadline, cancel)
             report.context_blind_spots.append("OS notifications may be delayed or omitted; startup, failed registration, and gaps are not confirmed stability")
             progress("starting")
+            if self.request.extended_diagnostics:
+                wait_started = self._clock()
+                ready_deadline = min(collection_deadline, wait_started + 1.0)
+                while not stopped() and self._clock() < ready_deadline:
+                    watch = observer.snapshot()
+                    if (watch.get("status") in {"READY", "ERROR"} or watch.get("errors")
+                            or watch.get("exit_code") is not None):
+                        break
+                    self._wait(cancel, min(0.01, max(0.0, ready_deadline - self._clock())))
+                observer_wait_seconds = max(0.0, self._clock() - wait_started)
             while not stopped():
+                opening = reusable_opening() if self.request.extended_diagnostics else None
+                opening_cost = 0.0 if opening is not None else identity_query_seconds
+                closing_reserve = min(self.request.duration_seconds * 0.1, 6.0,
+                                      max(0.01, identity_query_seconds * 1.25))
+                cleanup_allowance = getattr(provider, "cleanup_budget_seconds", 0.0)
+                if not isinstance(cleanup_allowance, (int, float)) or not math.isfinite(cleanup_allowance):
+                    cleanup_allowance = 0.0
+                cleanup_allowance = min(MAX_CLEANUP_SECONDS, max(0.0, cleanup_allowance))
+                probe_allowance = getattr(provider, "probe_budget_seconds", 0.01)
+                if not isinstance(probe_allowance, (int, float)) or not math.isfinite(probe_allowance):
+                    probe_allowance = 0.01
+                if (self.request.extended_diagnostics and round_index
+                        and collection_deadline - self._clock()
+                        <= opening_cost + closing_reserve + cleanup_allowance + probe_allowance):
+                    report.incomplete.append("Insufficient remaining budget for another opening/probe/closing round")
+                    break
                 round_index += 1
                 round_started = self._clock()
-                round_identity, context = network()
+                if opening is not None:
+                    round_identity, context = opening["identity"], opening["context"]
+                    latest_network_result, latest_network_query = opening["result"], opening["query"]
+                else:
+                    round_identity, context = network()
+                next_opening = None
                 if stopped():
                     break
                 gateway = context.get("gateway")
@@ -476,9 +543,12 @@ class SessionController:
                     cohort_disrupted = False
                     pending_cohort_start = len(report.evidence)
                     context_result = dict(latest_network_result)
-                    context_result["data"] = dict(context, role="local", round_index=round_index)
-                    append("network", "local_network", context_result, round_started,
-                           active_epoch, round_identity is not None)
+                    context_result["data"] = dict(context, role="local", round_index=round_index,
+                                                  shared_adjacent_boundary=opening is not None,
+                                                  context_query_index=latest_network_query["index"])
+                    append("network", "local_network", context_result, latest_network_query["started"],
+                           active_epoch, round_identity is not None, latest_network_query["finished"],
+                           latest_network_query["timestamp"])
                     tasks, missing = _extended_tasks(self.request, context)
                     for task in missing:
                         append("icmp", task["target"], {"outcome": "not_attempted",
@@ -494,8 +564,24 @@ class SessionController:
                         }, self._clock(), active_epoch, False)
                     tasks.extend(_task("icmp", target, "public") for target in self.request.ping_targets if target != gateway)
                     tasks.extend(_task("dns", target, "dns") for target in self.request.dns_hostnames)
+                closing_reserve = min(self.request.duration_seconds * 0.1, 6.0,
+                                      max(0.01, identity_query_seconds * 1.25))
+                probe_deadline = (collection_deadline - closing_reserve - cleanup_allowance
+                                  if self.request.extended_diagnostics else collection_deadline)
+                probe_window_ended = False
                 for index, task in enumerate(tasks):
                     protocol, target = task["protocol"], task["target"]
+                    if self.request.extended_diagnostics and not stopped() and self._clock() >= probe_deadline:
+                        probe_window_ended = True
+                        for pending in tasks[index:]:
+                            append(pending["protocol"], pending["target"], {
+                                "outcome": "not_attempted",
+                                "error": "Remaining budget reserved for closing identity and owned-process cleanup",
+                                "data": {"stage": "closing_context_reserve", "family": pending["family"],
+                                         "role": pending["role"], "target_host": pending["target_host"],
+                                         "round_index": round_index}}, self._clock(), active_epoch, False)
+                        report.incomplete.append("Remaining checks were not attempted: closing identity/cleanup budget reserved")
+                        break
                     if stopped():
                         report.incomplete.extend(f"{pending['protocol']} {pending['target']}: {reason()}" for pending in tasks[index:])
                         break
@@ -533,7 +619,7 @@ class SessionController:
                     progress(f"{protocol}: {task['role']} {task['family']}"
                              if self.request.extended_diagnostics else f"{protocol}: {target}")
                     before = self._clock()
-                    result = provider.probe(protocol, target, collection_deadline, cancel)
+                    result = provider.probe(protocol, target, probe_deadline, cancel)
                     completed_at = self._clock()
                     completed_timestamp = datetime.now(timezone.utc).isoformat()
                     after_identity, _ = (cohort_boundary() if self.request.extended_diagnostics else network())
@@ -557,16 +643,31 @@ class SessionController:
                                 address = str(ipaddress.ip_address(addresses[0]))
                                 expected = 6 if protocol == "dns6" else 4
                                 if ipaddress.ip_address(address).version == expected:
-                                    tasks.insert(index + 1, _task("icmp", address, "target", task["family"], task["target_host"]))
+                                    # DNS-derived ICMP follows the remaining target
+                                    # protocol checks, before background references.
+                                    position = next((position for position in range(index + 1, len(tasks))
+                                                     if tasks[position]["role"] != "target"), len(tasks))
+                                    tasks.insert(position, _task("icmp", address, "target", task["family"], task["target_host"]))
                             except (ValueError, TypeError):
                                 pass
                 if self.request.extended_diagnostics:
-                    ending_identity, _ = network()
+                    ending_identity, ending_context = network()
+                    if (not stopped() and cohort_identity is not None and not cohort_disrupted
+                            and ending_identity == cohort_identity and active_epoch is cohort_epoch):
+                        next_opening = {"identity": ending_identity, "context": ending_context,
+                                        "epoch": active_epoch, "result": latest_network_result,
+                                        "query": latest_network_query}
                     finish_cohort(ending_identity)
-                if stopped():
+                if stopped() or probe_window_ended:
                     break
                 progress("observing")
-                self._wait(cancel, min(SAMPLE_INTERVAL_SECONDS, max(0.0, collection_deadline - self._clock())))
+                if self.request.extended_diagnostics:
+                    wait_until = min(collection_deadline, self._clock() + SAMPLE_INTERVAL_SECONDS)
+                    while not stopped() and self._clock() < wait_until:
+                        reusable_opening()
+                        self._wait(cancel, min(0.01, max(0.0, wait_until - self._clock())))
+                else:
+                    self._wait(cancel, min(SAMPLE_INTERVAL_SECONDS, max(0.0, collection_deadline - self._clock())))
             report.status = reason()
             report.incomplete.append("Observation ended: " + report.status + "; additional evidence was not collected")
         except Exception as exc:

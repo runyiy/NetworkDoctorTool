@@ -105,6 +105,45 @@ class ProcessProviderTests(unittest.TestCase):
         self.assertEqual(provider.active_pids, [])
         self.assertEqual(provider.cleanup_errors, [])
 
+    def test_startup_allowance_preserves_native_timeout_and_absolute_deadline(self):
+        clock, event = FakeClock(), threading.Event()
+        process = FakeProcess(clock, event, behavior="stall")
+        original = process.communicate
+        def delayed(input=None, timeout=None):
+            if clock() >= 2.1:
+                process.behavior = "success"
+            return original(input, timeout)
+        process.communicate = delayed
+        provider = probes.WindowsProbeProvider(clock)
+        provider.set_cleanup_deadline(3.5)
+        with patch.object(probes.sys, "platform", "win32"), \
+             patch.object(provider, "_command", return_value=["trusted-python"]), \
+             patch.object(probes.subprocess, "Popen", return_value=process), \
+             patch.object(probes, "_OwnedJob", side_effect=FakeJob):
+            result = provider.probe("icmp", "127.0.0.1", 3.0, event)
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(json.loads(process.inputs[0])["timeout_ms"], 1000)
+        self.assertGreaterEqual(result["data"]["parent_timing"]["response_elapsed_seconds"], 2.1)
+        self.assertLessEqual(result["data"]["parent_timing"]["return_elapsed_seconds"], 3.0)
+        self.assertEqual(provider.active_pids, [])
+        self.assertEqual(provider.cleanup_errors, [])
+
+    def test_startup_allowance_is_clipped_by_short_subdeadline(self):
+        clock, event = FakeClock(), threading.Event()
+        process = FakeProcess(clock, event, behavior="stall")
+        provider = probes.WindowsProbeProvider(clock)
+        provider.set_cleanup_deadline(1.0)
+        with patch.object(probes.sys, "platform", "win32"), \
+             patch.object(provider, "_command", return_value=["trusted-python"]), \
+             patch.object(probes.subprocess, "Popen", return_value=process), \
+             patch.object(probes, "_OwnedJob", side_effect=FakeJob):
+            result = provider.probe("icmp", "127.0.0.1", 1.0, event)
+        self.assertEqual(result["outcome"], "execution_error")
+        self.assertLessEqual(clock(), 1.0)
+        self.assertTrue(process.killed)
+        self.assertEqual(provider.active_pids, [])
+        self.assertEqual(json.loads(process.inputs[0])["timeout_ms"], 1000)
+
     def test_cancelled_running_worker_is_reaped_without_inventing_packet_counts(self):
         provider, result, process, _ = self.run_fake("cancel")
         self.assertEqual(result["outcome"], "cancelled")
