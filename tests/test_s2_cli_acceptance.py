@@ -138,7 +138,7 @@ class NativeCLI(unittest.TestCase):
         # An explicit valid config avoids the user's original config and DB.
         config = runtime / "controlled-config.json"
         config.write_text(json.dumps({"public_ping_targets": ["127.0.0.1"],
-            "dns_test_hostnames": ["localhost"], "log_level": "WARNING",
+            "dns_test_hostnames": ["127.0.0.1" if response_status == 503 else "localhost"], "log_level": "WARNING",
             "alerts": {"enabled": False}, "lan_discovery_firewall_enabled": False}), encoding="utf-8")
         config_before = hashlib.sha256(config.read_bytes()).hexdigest()
         server = OwnedHTTP(("127.0.0.1", 0), Handler)

@@ -221,6 +221,12 @@ def _extended_tasks(request, context):
     for host in request.dns_hostnames:
         if host not in website_hosts:
             tasks.extend((_task("dns", host, "dns", "IPv4"), _task("dns6", host, "dns", "IPv6")))
+    # The same website probe is not an independent public reference.
+    # Keep all target tasks and later rounds; remove only exact public duplicates.
+    website_probes = {(task["protocol"], task["target"], task["family"])
+                      for task in tasks if task["role"] == "target"}
+    tasks = [task for task in tasks if task["role"] != "public"
+             or (task["protocol"], task["target"], task["family"]) not in website_probes]
     return tasks, missing
 
 

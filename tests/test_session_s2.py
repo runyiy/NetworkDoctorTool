@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from losshound import app
 from losshound.cli import runner
-from losshound.core.session import SessionController, SessionReport, SessionRequest
+from losshound.core.session import SessionController, SessionReport, SessionRequest, _extended_tasks
 from test_session_s1 import FakeClock, FakeProvider
 from test_session_context_s1 import StableObserver
 
@@ -89,6 +89,49 @@ class ExtendedSessionTests(unittest.TestCase):
         report = SessionController(req or request(), provider, clock, clock.wait,
                                    context_observer=observer).run(event, progress)
         return report, provider, observer
+
+    def test_website_tasks_replace_only_exact_public_duplicates(self):
+        req = request(
+            website_urls=("http://192.0.2.90:8080/check", "https://[2001:db8::90]:8443/check"),
+            ping_targets=("192.0.2.90", "192.0.2.91"),
+            ipv6_targets=("2001:db8::90", "2001:db8::91"),
+            tcp_targets=("192.0.2.90:8080", "192.0.2.90:8081", "192.0.2.91:8080",
+                         "[2001:db8::90]:8443", "[2001:db8::90]:8444", "[2001:db8::91]:8443"),
+            dns_hostnames=(),
+        )
+        tasks, missing = _extended_tasks(req, {})
+        for protocol, target, family in (
+            ("icmp", "192.0.2.90", "IPv4"), ("tcp", "192.0.2.90:8080", "IPv4"),
+            ("icmp", "2001:db8::90", "IPv6"), ("tcp6", "[2001:db8::90]:8443", "IPv6"),
+        ):
+            with self.subTest(protocol=protocol, target=target):
+                matches = [task for task in tasks if (task["protocol"], task["target"], task["family"])
+                           == (protocol, target, family)]
+                self.assertEqual(len(matches), 1)
+                self.assertEqual(matches[0]["role"], "target")
+        public = {(task["protocol"], task["target"], task["family"])
+                  for task in tasks if task["role"] == "public"}
+        self.assertEqual(public, {
+            ("icmp", "192.0.2.91", "IPv4"), ("icmp", "2001:db8::91", "IPv6"),
+            ("tcp", "192.0.2.90:8081", "IPv4"), ("tcp", "192.0.2.91:8080", "IPv4"),
+            ("tcp6", "[2001:db8::90]:8444", "IPv6"), ("tcp6", "[2001:db8::91]:8443", "IPv6"),
+        })
+        self.assertTrue(any(task["protocol"] == "http" and task["role"] == "target" for task in tasks))
+        self.assertTrue(any(task["protocol"] == "https6" and task["role"] == "target" for task in tasks))
+        self.assertEqual({task["family"] for task in missing}, {"IPv4", "IPv6"})
+
+    def test_website_deduplication_preserves_independent_later_rounds(self):
+        url = "http://203.0.113.90:8080/check"
+        req = request(website_urls=(url,), ping_targets=("203.0.113.90",),
+                      tcp_targets=("203.0.113.90:8080",), ipv6_targets=(), dns_hostnames=())
+        report, _provider, _observer = self.run_simulated(req=req)
+        for protocol, target in (("icmp", "203.0.113.90"),
+                                 ("tcp", "203.0.113.90:8080"), ("http", url)):
+            with self.subTest(protocol=protocol):
+                rows = [row for row in report.evidence if row.protocol == protocol and row.target == target]
+                self.assertEqual(len(rows), len({row.data["round_index"] for row in rows}))
+                self.assertTrue(all(row.data["role"] == "target" for row in rows))
+                self.assertGreaterEqual(len([row for row in rows if row.comparable]), 2)
 
     def test_dual_stack_cross_protocol_collection_and_current_analysis(self):
         report, provider, _ = self.run_simulated()

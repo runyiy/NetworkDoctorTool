@@ -17,7 +17,7 @@ These controls are inherited from NoSelection/Losshound. The installation and fi
 - Qt 6.12.0对既有CVE-2026-105924记录的精确wheel补丁证明不足，以及WebEngine/Pdf 6.12.0.140原生补丁级别不确定性仍未解决。用户风险接受仅限该本机试用及同批依赖的有条件非发布EXE；不是漏洞已修复或生产放行的证明。不得加载不可信网页、SVG、PDF或私人文档来扩大试用。
 - 官方来源、实际哈希、其他公告、全部TLS验证、Qt XML排除及回流拒绝、原生DLL来源、普通用户、只读诊断和仅模拟修复的边界继续有效。不能沿用Qt 6.11.2专属XML标志给其他版本免检，不能添加未知/高危风险例外。
 - 本机EXE必须先满足现有完整保留测试及其他可适用前置，再经实际归档XML/原生来源检查、冻结入口/GUI/清理验证；当前HTTP 503真实CLI断言尚未满足，因此未执行构建或启动EXE。完整离线验收及公开发布条件均未满足，不生成或上传未经验证的可发布产物。
-- 本机HTTPS仍以错误码20拒绝无法建立的信任链；没有关闭证书/主机名验证、导入根证书或将该失败加入安全豁免。真实DNS缓存清理仍未授权。
+- 原目标example.com在同IP/地址族/SNI/CA策略下，产品与标准库均以代码20拒绝无法建立的信任链；www.python.org官方对照在两条路径均通过TLS1.3验证，产品获得HTTP206。对照成功不等于原目标已修复或已排除按目标网络干预。没有关闭证书/主机名验证、改变验证标志、导入根证书、调整代理/DNS或增加安全豁免；真实DNS缓存清理仍未授权。
 ## Dependency provenance and installation gate
 
 - Keep exact stable pins in requirements-ci.txt, official package identities/publishers and source links, reviewed dependencies/privileges, and official GitHub Actions pinned to full commit hashes. No lookalike replacements or automatic upgrades.
