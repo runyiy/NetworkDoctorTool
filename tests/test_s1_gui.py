@@ -53,10 +53,35 @@ class _Widget:
         self._range = (0, 100)
         self.clicked = _EventSignal()
         self.timeout = _EventSignal()
+        self.currentIndexChanged = _EventSignal()
+        self.toggled = _EventSignal()
+        self._items, self._current_index = [], 0
+        self._checked, self._signals_blocked = False, False
         self.close_count = 0
         self.hidden = False
         self.active = False
 
+    def addItem(self, text, data=None): self._items.append((text, data))
+    def itemData(self, index): return self._items[index][1]
+    def currentData(self): return self.itemData(self._current_index)
+    def currentIndex(self): return self._current_index
+    def setCurrentIndex(self, index):
+        changed = index != self._current_index
+        self._current_index = index
+        if changed and not self._signals_blocked: self.currentIndexChanged.emit(index)
+    def blockSignals(self, blocked):
+        previous, self._signals_blocked = self._signals_blocked, blocked
+        return previous
+    def setChecked(self, checked):
+        changed = self._checked != checked
+        self._checked = checked
+        if changed and not self._signals_blocked: self.toggled.emit(checked)
+    def isChecked(self): return self._checked
+    def setCheckable(self, _value): pass
+    def setVisible(self, visible): self.hidden = not visible
+    def isVisible(self): return not self.hidden
+    def setMinimumHeight(self, *_args): pass
+    def setMaximumHeight(self, *_args): pass
     def setText(self, value): self._text = value
     def text(self): return self._text
     def setPlainText(self, value): self._text = value
@@ -85,7 +110,7 @@ class _Widget:
     def addWidget(self, *_args): pass
     def addLayout(self, *_args): pass
     def addStretch(self): pass
-    def setWindowTitle(self, *_args): pass
+    def setWindowTitle(self, title): self._window_title = title
     def setWindowIcon(self, *_args): pass
     def setMinimumSize(self, *_args): pass
     def resize(self, *_args): pass
@@ -128,6 +153,7 @@ class _Header(_Widget):
         super().__init__()
         self._pause_btn = _Widget()
         self._run_btn = _Widget()
+        self._subtitle = _Widget()
 
 
 class _Request:
@@ -163,17 +189,19 @@ class _Report:
 
 
 @contextmanager
-def _gui_modules(real_core=False):
+def _gui_modules(real_core=False, language="en"):
     """Use inert Qt; optionally preserve the real current-session core modules."""
     qt = types.ModuleType("PySide6")
     core = types.ModuleType("PySide6.QtCore")
     core.QThread, core.Signal, core.QTimer = _Thread, _Signal, _Timer
     core.Slot = lambda *_args, **_kwargs: (lambda function: function)
+    core.QCoreApplication = types.SimpleNamespace(instance=lambda: None)
+    core.QTranslator = _Widget
     core.Qt = types.SimpleNamespace(ConnectionType=types.SimpleNamespace(QueuedConnection=1))
     widgets = types.ModuleType("PySide6.QtWidgets")
     for name in (
         "QFileDialog", "QHBoxLayout", "QLabel", "QMessageBox", "QPlainTextEdit",
-        "QProgressBar", "QPushButton", "QSpinBox", "QVBoxLayout", "QWidget", "QMainWindow", "QLineEdit",
+        "QProgressBar", "QPushButton", "QSpinBox", "QVBoxLayout", "QWidget", "QMainWindow", "QLineEdit", "QComboBox",
     ):
         setattr(widgets, name, _Widget)
     widgets.QMessageBox = _MessageBox
@@ -218,7 +246,9 @@ def _gui_modules(real_core=False):
         for name in ("losshound.core.session", "losshound.core.repair",
                      "losshound.core.session_report"):
             importlib.import_module(name)
-        with patch.dict(sys.modules, replacements):
+        with patch.dict(sys.modules, replacements), \
+             patch("losshound.gui.i18n.load_language_preference", return_value=language), \
+             patch("losshound.gui.i18n.save_language_preference", return_value=True):
             worker = importlib.import_module(names[0])
             panel = importlib.import_module(names[1])
             window = importlib.import_module(names[2])

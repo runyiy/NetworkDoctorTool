@@ -25,6 +25,28 @@ DNS_LIMIT = "系统解析可能来自 hosts 或缓存；未观察 DNS 线上数�
 CATEGORIES = {"local": "lan_issue", "wifi": "lan_issue", "gateway": "lan_issue",
               "wan_or_isp": "isp_wan_issue", "dns": "dns_issue"}
 
+# Additive presentation identifiers. They do not participate in rule decisions.
+SCOPE_MESSAGE_IDS = {
+    "local": "diagnosis.local_configuration", "gateway": "diagnosis.gateway_path",
+    "wifi": "diagnosis.wifi_link", "wan_or_isp": "diagnosis.upstream_path",
+    "dns": "diagnosis.dns_resolution", "target": "diagnosis.target_path",
+    "unknown": "diagnosis.unknown_window",
+}
+_RULE_IDS = tuple(SCOPE_MESSAGE_IDS.values()) + (
+    "diagnosis.target_service", "diagnosis.unknown_evidence", "diagnosis.intermittent",
+)
+DIAGNOSIS_MESSAGE_IDS = frozenset(_RULE_IDS) | frozenset(
+    "diagnosis." + prefix + value.removeprefix("diagnosis.")
+    for prefix in ("alt.", "advice.") for value in _RULE_IDS
+) | frozenset({
+    "diagnosis.limit.window", "diagnosis.limit.repeat_window", "diagnosis.limit.truncated",
+    "diagnosis.limit.duplicates", "diagnosis.limit.incomplete", "diagnosis.limit.blind_spots",
+    "diagnosis.limit.dns_cache", "diagnosis.limit.no_wifi", "diagnosis.limit.findings_limit",
+    "diagnosis.limit.response_not_repair", "diagnosis.coverage.scope_limited",
+    "diagnosis.coverage.scope_window", "diagnosis.coverage.intermittent_limited",
+    "diagnosis.coverage.intermittent_seen", "diagnosis.coverage.intermittent_not_seen",
+})
+
 
 def _int(value):
     return isinstance(value, int) and not isinstance(value, bool)
@@ -175,7 +197,9 @@ def _refs(rows):
     return sorted({row["sequence"] for row in rows})[:MAX_REFERENCES]
 
 
-def _finding(scope, key, proof, contradictions, explanation, alternatives, recommendations, *, fields=(), confidence="low"):
+def _finding(scope, key, proof, contradictions, explanation, alternatives, recommendations, *, fields=(), confidence="low", message_id=None):
+    message_id = message_id or SCOPE_MESSAGE_IDS.get(scope, "diagnosis.unknown_window")
+    rule = message_id.removeprefix("diagnosis.")
     references = _refs(proof)
     counters = [value for value in _refs(contradictions) if value not in references]
     starts = [row["start"] for row in proof if row["start"] is not None]
@@ -186,6 +210,10 @@ def _finding(scope, key, proof, contradictions, explanation, alternatives, recom
             "contradictions": counters, "context_fields": list(fields),
             "window": {"started_seconds": min(starts) if starts else None,
                        "finished_seconds": max(ends) if ends else None},
+            "message_id": message_id,
+            "alternative_message_ids": ["diagnosis.alt." + rule],
+            "recommendation_message_ids": ["diagnosis.advice." + rule],
+            "limitation_message_ids": ["diagnosis.limit.window"],
             "explanation": explanation, "alternatives": list(alternatives),
             "limitations": [WINDOW_LIMIT], "recommendations": list(recommendations)}
 
@@ -209,6 +237,10 @@ def _intermittent(rows):
                                    "target": key[3], "resolved_ip": key[4] if key[2] != "dns" else None,
                                    "evidence_sequences": _refs(proof), "supporting_evidence": _refs(proof),
                                    "contradictions": [], "confidence": "medium",
+                                   "message_id": "diagnosis.intermittent",
+                                   "alternative_message_ids": ["diagnosis.alt.intermittent"],
+                                   "recommendation_message_ids": ["diagnosis.advice.intermittent"],
+                                   "limitation_message_ids": ["diagnosis.limit.window", "diagnosis.limit.response_not_repair", *(['diagnosis.limit.dns_cache'] if key[2] == "dns" else [])],
                                    "window": {"started_seconds": baseline["start"], "finished_seconds": row["end"]},
                                    "explanation": "同一环境、地址族、实际目标和协议在新鲜窗口内出现成功、网络响应失败、再次成功。",
                                    "alternatives": ["暂时的目标响应策略或路径变化也可能产生这一序列，不能确认根因。"],
@@ -251,6 +283,17 @@ def analyze_report(report_dict: dict) -> dict:
         limitations.append("网络环境观察存在盲区，只使用明确可比较的同环境证据。")
     if any(row["protocol"] == "dns" for row in rows):
         limitations.append(DNS_LIMIT)
+    limitation_ids = ["diagnosis.limit.window", "diagnosis.limit.repeat_window"]
+    if truncated:
+        limitation_ids.append("diagnosis.limit.truncated")
+    if duplicates or duplicate_epochs:
+        limitation_ids.append("diagnosis.limit.duplicates")
+    if report.get("incomplete"):
+        limitation_ids.append("diagnosis.limit.incomplete")
+    if report.get("context_blind_spots"):
+        limitation_ids.append("diagnosis.limit.blind_spots")
+    if any(row["protocol"] == "dns" for row in rows):
+        limitation_ids.append("diagnosis.limit.dns_cache")
     findings, groups = [], defaultdict(list)
     for row in rows:
         if row["protocol"] != "network":
@@ -327,6 +370,7 @@ def analyze_report(report_dict: dict) -> dict:
                         ["本机解析配置、hosts、缓存、名称本身及解析服务均可能影响结果。"],
                         ["核对原始系统解析错误和既有解析配置，需变更时另行确认。"])
                     item["limitations"].append(DNS_LIMIT)
+                    item["limitation_message_ids"].append("diagnosis.limit.dns_cache")
                     findings.append(item)
                 by_destination = defaultdict(list)
                 for row in by_role["target"]:
@@ -346,13 +390,13 @@ def analyze_report(report_dict: dict) -> dict:
             for target_rows in by_destination.values():
                 tcp_good = _repeat([row for row in target_rows if row["protocol"] == "tcp"], True)
                 web_errors = [row for row in target_rows if row["protocol"] in ("http", "https")
-                              and (_category(row) in ("tls_validation", "tls_handshake", "http_status")
-                                   or (_int(row["data"].get("http_status")) and row["data"]["http_status"] >= 400))]
+                              and (_category(row) in ("tls_validation", "tls_handshake")
+                                   or (_int(row["data"].get("http_status")) and 400 <= row["data"]["http_status"] <= 599))]
                 if tcp_good and len(web_errors) >= 2 and len({(row["protocol"], row["target"], _category(row), row["data"].get("http_status") if _int(row["data"].get("http_status")) else None) for row in web_errors}) == 1:
-                    findings.append(_finding("target", key, tcp_good + web_errors[:2], [row for row in target_rows if row["protocol"] in ("http", "https") and row["outcome"] == "success" and not _category(row) and (_int(row["data"].get("http_status")) and row["data"]["http_status"] < 400)],
+                    findings.append(_finding("target", key, tcp_good + web_errors[:2], [row for row in target_rows if row["protocol"] in ("http", "https") and row["outcome"] == "success" and _category(row) in ("", "http_status") and (_int(row["data"].get("http_status")) and 100 <= row["data"]["http_status"] < 400)],
                         "同一目标实际地址有 TCP 响应，同时 HTTP 状态或 TLS 握手/验证重复报错。",
                         ["服务状态、授权、应用协议或 TLS 配置问题不同于网络不可达，不能据此归因 ISP。"],
-                        ["查看对应服务或协议错误，并保持 TLS 证书验证启用。"], confidence="medium"))
+                        ["查看对应服务或协议错误，并保持 TLS 证书验证启用。"], confidence="medium", message_id="diagnosis.target_service"))
         if len(findings) == before:
             findings.append(_finding("unknown", key, [row for row in recent if not _good(row)], positive,
                 "证据不足或存在反证，未满足新鲜、同环境、同地址族、实际地址与多协议重复对照条件。",
@@ -362,16 +406,23 @@ def analyze_report(report_dict: dict) -> dict:
         findings.append(_finding("unknown", (None, "UNKNOWN"), [], [],
             "缺少可比较的同环境证据，不能判断健康或故障原因。",
             ["采集未开始、环境未知或工具不可用均可能造成证据缺失。"],
-            ["查看采集状态和未完成项，再决定是否另行诊断。"]))
+            ["查看采集状态和未完成项，再决定是否另行诊断。"], message_id="diagnosis.unknown_evidence"))
     intermittent = [] if truncated else _intermittent(rows)
     limitations.append("没有可关联当前路由接口的直接 Wi-Fi 信号/链路证据时，不作无线根因判断。")
     if len(findings) > MAX_FINDINGS:
         limitations.append("发现项已达到输出上限，其余范围未评价。")
+    limitation_ids.append("diagnosis.limit.no_wifi")
+    if len(findings) > MAX_FINDINGS:
+        limitation_ids.append("diagnosis.limit.findings_limit")
     return {"schema_version": 1, "findings": findings[:MAX_FINDINGS], "intermittent": intermittent,
+            "limitation_message_ids": limitation_ids,
             "limitations": limitations, "coverage": {
                 "input_evidence_count": len(evidence), "examined_evidence_count": min(len(evidence), MAX_EVIDENCE),
                 "comparable_evidence_count": len(rows), "excluded_evidence_count": min(len(evidence), MAX_EVIDENCE) - len(rows),
                 "epoch_count": len(epochs), "truncated": truncated,
+                "scope_observation_message_id": "diagnosis.coverage.scope_limited" if truncated else "diagnosis.coverage.scope_window",
+                "intermittent_observation_message_id": ("diagnosis.coverage.intermittent_limited" if truncated else
+                    "diagnosis.coverage.intermittent_seen" if intermittent else "diagnosis.coverage.intermittent_not_seen"),
                 "comparison_window_seconds": COMPARISON_WINDOW_SECONDS,
                 "repeat_samples_per_protocol_target": REPEAT_SAMPLES,
                 "scope_observation": "范围推断受限。" if truncated else "仅对最后一个新鲜窗口给出保守范围线索。",

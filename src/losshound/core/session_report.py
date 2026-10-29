@@ -10,6 +10,53 @@ import ipaddress
 import re
 from urllib.parse import urlsplit
 
+from losshound.core.session_diagnosis import DIAGNOSIS_MESSAGE_IDS
+from losshound.core.session_summary import COVERAGE_REASON_CODES, SUMMARY_MESSAGE_IDS
+
+# Only exact enums in these exact fields bypass free-text alias substitution.
+# Raw diagnostic/private fields never receive an exemption.
+_SAFE_CODES = {
+    "protocol": {"network", "icmp", "icmp6", "dns", "dns6", "tcp", "tcp6", "http", "http6", "https", "https6"},
+    "family": {"IPv4", "IPv6", "UNKNOWN"},
+    "outcome": {"success", "reply_timeout", "unreachable", "execution_error", "unsupported", "skipped", "cancelled", "not_attempted"},
+    "contextstatus": {"KNOWN", "UNKNOWN", "IDENTIFIED"},
+    "status": {"KNOWN", "UNKNOWN", "IDENTIFIED", "READY", "configured", "incomplete", "unknown", "success", "unavailable", "unsupported",
+               "completed", "deadline", "cancelled", "execution_error", "cleanup_failed",
+               "pending", "confirmed", "not_confirmed", "rejected", "not_started",
+               "simulated_success", "simulated_failure", "simulated_tool_error", "declined", "not_attempted",
+               "observed_dns_improvement", "no_dns_improvement_observed",
+               "inconclusive", "failed", "timed_out", "permission_denied", "not_executed"},
+    "continuity": {"OBSERVED", "UNKNOWN"},
+    "change": {"improved", "worsened", "inconclusive", "unchanged_success", "unchanged_failure", "unchanged_service_error"},
+    "scope": {"local", "wifi", "gateway", "wan_or_isp", "dns", "target", "unknown"},
+    "category": {"lan_issue", "isp_wan_issue", "dns_issue", "unknown"},
+    "confidence": {"low", "medium", "high", "unknown", "insufficient"},
+    "role": {"local", "gateway", "public", "dns", "target", "unknown"},
+    "source": {"os_resolver"},
+    "targetscope": {"localhost", "non_localhost"},
+    "errorcategory": {"tls_validation", "tls_handshake", "http_status", "timeout",
+                      "network_unreachable", "host_unreachable", "connection_refused", "os_error"},
+    "part": {"connectivity", "dns", "gateway", "website"},
+    "coveragestatus": {"responses", "mixed", "failures", "not_tested", "tool_error",
+                       "no_comparable", "not_configured", "http_error", "tls_error",
+                       "partial", "complete", "supported_scope", "multiple_epochs"},
+    "reasoncode": COVERAGE_REASON_CODES,
+    "reasoncodes": COVERAGE_REASON_CODES,
+    "coveragecodes": COVERAGE_REASON_CODES,
+    "contextfields": {"context.diagnostics.families.IPv4", "context.diagnostics.families.IPv6",
+                      "context.diagnostics.wifi"},
+}
+_MESSAGE_FIELDS = {
+    "messageid", "messageids", "alternativemessageids", "recommendationmessageids",
+    "limitationmessageids", "scopeobservationmessageid", "intermittentobservationmessageid",
+}
+_MESSAGE_IDS = DIAGNOSIS_MESSAGE_IDS | SUMMARY_MESSAGE_IDS
+
+
+def _safe_code(field, value):
+    return (type(value) is str and
+            (value in _MESSAGE_IDS if field in _MESSAGE_FIELDS else value in _SAFE_CODES.get(field, ())))
+
 _URL = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?(?![\w.])")
 _IPV6 = re.compile(r"(?<![\w:])(?:[0-9a-fA-F]{0,4}:){2,}[0-9a-fA-F:.]*(?:%[\w.-]+)?(?:/\d{1,3})?(?![\w:])")
@@ -111,6 +158,8 @@ def redact_report(report_dict) -> dict:
         field = normal(key)
         if is_raw(field) or field in _DETAIL_KEYS:
             return
+        if _safe_code(field, value):
+            return
         context = context or field == "context"
         if isinstance(value, dict):
             for child_key, child in value.items():
@@ -165,6 +214,8 @@ def redact_report(report_dict) -> dict:
             return target(value)
         if field in _PRIVATE_KEYS:
             return alias(value, field)
+        if _safe_code(field, value):
+            return value
         if context and value not in _CONTEXT_VALUES:
             return alias(value, "context")
         return text(value)
