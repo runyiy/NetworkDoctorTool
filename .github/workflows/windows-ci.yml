@@ -38,6 +38,59 @@ jobs:
         run: |
           python -I -S -B -c "import sys; sys.path.insert(0, 'scripts'); import run_s1_tests as runner; runner.DETERMINISTIC = ('test_version.PythonCompatibilityTests', 'test_session_output_s1.OutputContractTests', 'test_s1_entrypoints.BoundedCliTests.test_windows_311_public_cli_os_sink_returns_error_without_collection'); raise SystemExit(runner.main())" --mode deterministic --log build/python-compatibility.log --json build/python-compatibility.json
 
+  stdlib-simulated-contracts:
+    name: Stdlib and simulated contracts (not full Windows acceptance)
+    runs-on: windows-2022
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up stdlib interpreter without application dependencies
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13.15'
+          architecture: 'x64'
+
+      - name: Run existing isolated stdlib and Fake Qt contracts
+        run: |
+          @'
+          import sys
+          sys.path.insert(0, 'scripts')
+          import run_s1_tests as runner
+          runner.DETERMINISTIC += (
+              'test_session_s2', 'test_session_protocols_s2',
+              'test_session_diagnosis_s2', 'test_session_report_s2',
+              'test_repair_s3', 'test_repair_comparison_s3',
+              'test_dns_cache_adapter_s3', 'test_gui_integration',
+              'test_user_summary', 'test_gui_i18n.TranslationContracts',
+              'test_gui_i18n.BilingualPanelContracts',
+          )
+          raise SystemExit(runner.main())
+          '@ | python -I -S -B - --mode deterministic --log build/stdlib-contracts.log --json build/stdlib-contracts.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check all tracked public files
+        run: python -I -S -B scripts/check_public_files.py --all-tracked
+
+      - name: State limited coverage
+        if: always()
+        run: |
+          @'
+          ## Standard-library and simulated contracts only
+          This independent job checks finite sessions, Epoch/cancellation/cleanup,
+          mocked protocol/diagnosis/report and repair boundaries, Fake Qt integration,
+          bilingual summaries and tracked public-file privacy rules without installing
+          application dependencies or executing live probes, real Qt or repair commands.
+          It is not full Windows, GUI or EXE acceptance and does not clear the separate
+          dependency safety gate. The gate-to-install-to-test-to-package job is unchanged.
+          '@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+
   test-and-package:
     runs-on: windows-2022
     timeout-minutes: 30
