@@ -179,6 +179,22 @@ class BilingualPanelContracts(unittest.TestCase):
             self.assertFalse(panel._real_repair_btn.isEnabled())
             self.assertEqual(panel._real_repair_btn.clicked.callbacks, [])
 
+    def test_empty_repair_state_rerenders_for_each_language_without_starting_work(self):
+        with _gui_modules(real_core=True, language="zh-CN") as (_worker, panel_module, _window):
+            panel = panel_module.SessionPanel(_config())
+            self.assertEqual(panel._repair_preview.toPlainText(), "仅模拟。尚未执行模拟或独立验证。")
+            panel.set_language("en", persist=False)
+            self.assertEqual(panel._repair_preview.toPlainText(), "SIMULATION ONLY. No repair or verification has run.")
+            panel.set_language("zh-CN", persist=False)
+            self.assertEqual(panel._repair_preview.toPlainText(), "仅模拟。尚未执行模拟或独立验证。")
+            self.assertIsNone(panel._repair_record)
+            self.assertIsNone(panel._repair_controller)
+            self.assertIsNone(panel._worker)
+            self.assertIsNone(panel._active_request)
+            self.assertFalse(panel._display_timer.active)
+            self.assertFalse(panel._real_repair_btn.isEnabled())
+            self.assertEqual(panel._real_repair_btn.clicked.callbacks, [])
+
     def test_active_switch_keeps_worker_clock_request_cancel_and_progress(self):
         with _gui_modules(real_core=True, language="zh-CN") as (_worker, panel_module, _window):
             panel = panel_module.SessionPanel(_config())

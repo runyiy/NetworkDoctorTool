@@ -431,6 +431,8 @@ class SessionPanel(QWidget):
             self._repair_preview.setPlainText(brief)
             baseline = self._preview.toPlainText()
             self._preview.setPlainText(baseline + "\n\n" + format_repair_record(safe, self._language))
+        else:
+            self._repair_preview.setPlainText(self._t("ui.repair.placeholder"))
 
     @property
     def is_running(self):
