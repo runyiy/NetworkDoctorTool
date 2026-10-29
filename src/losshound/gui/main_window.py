@@ -17,6 +17,7 @@ from losshound.core.session_process import MAX_CLEANUP_SECONDS
 from losshound.gui.branding import app_icon
 from losshound.gui.painted import TexturedSurface
 from losshound.gui.session_panel import SessionPanel
+from losshound.gui.i18n import translate
 from losshound.gui.theme import get_dark_stylesheet
 from losshound.gui.widgets import LosshoundHeader
 
@@ -80,9 +81,17 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._header)
         self._session = SessionPanel(config, duration_seconds, self)
         self._session.cleanup_finished.connect(self._on_cleanup_finished)
+        self._session.language_changed.connect(self._apply_language)
+        self._apply_language(self._session.language)
         layout.addWidget(self._session, 1)
         # No automatic collection, tray monitoring, database migration, status
         # workers or mutation tabs are started while constructing the window.
+
+    def _apply_language(self, language):
+        self.setWindowTitle(translate(language, "window.title"))
+        subtitle = getattr(self._header, "_subtitle", None)
+        if subtitle is not None:
+            subtitle.setText(translate(language, "header.subtitle"))
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._close_pending = True
@@ -104,9 +113,7 @@ class MainWindow(QMainWindow):
         timeout_ms = int(MAX_CLEANUP_SECONDS * 1000) + 250
         clean = self._session.wait_for_shutdown(timeout_ms)
         if not clean:
-            self._session._state.setText(
-                "Cleanup has not completed; session worker is still retained."
-            )
+            self._session._set_status("state.cleanup.pending")
         return clean
 
     def _open_tab(self, target) -> None:

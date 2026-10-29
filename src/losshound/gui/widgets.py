@@ -90,6 +90,7 @@ class LosshoundHeader(QWidget):
         text_stack.addWidget(title)
 
         subtitle = QLabel("Network Diagnosis")
+        self._subtitle = subtitle
         subtitle.setStyleSheet(
             f"color: {c('info')}; "
             f"font-family: {FONT_CHROME_FAMILIES}; "
